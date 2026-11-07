@@ -1,0 +1,288 @@
+@import "tailwindcss";
+
+/*
+ * Brand colours. The --brand-* variables are overwritten at runtime from the admin
+ * settings (see SiteContext), so colour changes apply live to the whole interface.
+ */
+@theme {
+  --color-forest: var(--brand-forest, #172d2a);
+  --color-sage: var(--brand-sage, #e8f0e9);
+  --color-gold: var(--brand-gold, #d5a85c);
+  --color-cream: var(--brand-cream, #f8f8f5);
+  --color-gold-dark: #b8893f;
+  --color-gold-soft: #fbf3e2;
+  --color-bronze: #8a6a2f;
+  --color-muted: #5b6b60;
+  --color-line: #d9e2d9;
+  --color-danger: #8b1e1e;
+  --color-danger-soft: #fdecec;
+  --color-danger-line: #f3c2c2;
+  --font-sans: "Manrope", "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-forest);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
+}
+
+/* ---------- surfaces ---------- */
+.card {
+  background: #fff;
+  border: 1px solid #e6e9e4;
+  border-radius: 1.25rem;
+  box-shadow: 0 1px 2px rgba(23, 45, 42, 0.05);
+}
+.card-hover {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 40px -18px rgba(23, 45, 42, 0.25);
+}
+
+/* ---------- buttons ---------- */
+.btn-primary,
+.btn-gold,
+.btn-outline,
+.btn-ghost,
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 0.8rem 1.4rem;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s, opacity 0.2s;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: var(--color-forest);
+  color: var(--color-cream);
+  border: 1px solid var(--color-forest);
+}
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.btn-gold {
+  background: var(--color-gold);
+  color: var(--color-forest);
+  border: 1px solid var(--color-gold);
+  font-weight: 800;
+}
+.btn-gold:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.btn-outline {
+  background: transparent;
+  color: var(--color-forest);
+  border: 1.5px solid var(--color-forest);
+}
+.btn-outline:hover:not(:disabled) {
+  background: var(--color-sage);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--color-forest);
+  padding: 0.55rem 0.9rem;
+  font-size: 0.9rem;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-sage);
+}
+.btn-danger {
+  background: var(--color-danger);
+  color: #fff;
+  border: 1px solid var(--color-danger);
+}
+.btn-primary:disabled,
+.btn-gold:disabled,
+.btn-outline:disabled,
+.btn-ghost:disabled,
+.btn-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---------- forms ---------- */
+.input {
+  width: 100%;
+  background: #fff;
+  border: 1.5px solid #d9e2d9;
+  border-radius: 0.9rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  outline: none;
+  color: var(--color-forest);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input:focus {
+  border-color: var(--color-forest);
+  box-shadow: 0 0 0 3px rgba(23, 45, 42, 0.08);
+}
+.input::placeholder {
+  color: #8a9a8f;
+}
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+.label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--color-forest);
+  margin-bottom: 0.35rem;
+  letter-spacing: 0.01em;
+}
+
+/* ---------- badges & typography ---------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.65rem;
+  border-radius: 9999px;
+}
+.badge-sage {
+  background: var(--color-sage);
+  color: var(--color-forest);
+  border: 1px solid #cfe0d2;
+}
+.badge-gold {
+  background: var(--color-gold-soft);
+  color: #7a5a1e;
+  border: 1px solid #ead9ae;
+}
+.badge-forest {
+  background: var(--color-forest);
+  color: var(--color-cream);
+}
+.badge-red {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-line);
+}
+.section-title {
+  font-size: clamp(1.7rem, 4vw, 2.6rem);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+.eyebrow {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-bronze);
+}
+
+/* ---------- navigation tabs ---------- */
+.tab-btn {
+  padding: 0.6rem 1rem;
+  border-radius: 9999px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  border: 1.5px solid var(--color-line);
+  background: #fff;
+  white-space: nowrap;
+  transition: background-color 0.2s, color 0.2s;
+}
+.tab-btn.active {
+  background: var(--color-forest);
+  color: var(--color-cream);
+  border-color: var(--color-forest);
+}
+
+/* ---------- loading & motion ---------- */
+.skeleton {
+  background: linear-gradient(90deg, #e8f0e9 25%, #f2f6f2 50%, #e8f0e9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 0.75rem;
+}
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: fadeUp 0.6s ease both;
+}
+
+/* ---------- tables ---------- */
+.table-wrap {
+  overflow-x: auto;
+}
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  min-width: 640px;
+}
+table.data th {
+  text-align: left;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px solid #e6e9e4;
+}
+table.data td {
+  padding: 0.8rem;
+  border-bottom: 1px solid #eef1ed;
+  vertical-align: top;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #c9d6cb;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
