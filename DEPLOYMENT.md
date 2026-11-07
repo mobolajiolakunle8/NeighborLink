@@ -1,133 +1,99 @@
-# NeighbourLink — Firebase setup & deployment
+# NeighbourLink — Vercel + Firebase deployment
 
-**Tagline:** Your Community. Your Connections. · Ibadan, Nigeria
-**Firebase project:** `neighborlink-71fef`
+NeighbourLink is a **Next.js App Router** application hosted on Vercel, using Firebase for Authentication, Cloud Firestore, Cloud Storage, Analytics and optional Cloud Messaging. Ibadan, Nigeria · +2349030192034.
 
-## Architecture
+## First: the Vercel `404 NOT_FOUND` in your screenshot
 
-| Concern | Firebase service | Where it lives |
-|---|---|---|
-| Accounts & sessions | Authentication (Email/Password) | `src/context/AuthContext.tsx`, `src/lib/api.ts` |
-| Data & live sync | Cloud Firestore + `onSnapshot` | `src/lib/hooks.ts`, `src/context/SiteContext.tsx` |
-| Images | Cloud Storage | `src/lib/uploads.ts`, `storage.rules` |
-| Push notifications | Cloud Messaging (FCM) | `src/lib/messaging.ts`, `src/app/firebase-messaging-sw.js/route.ts` |
-| Analytics | Google Analytics for Firebase | `src/lib/firebase.ts` |
-| Access control | Security rules | `firestore.rules`, `storage.rules` |
-| Hosting (SSR) | Firebase App Hosting | `apphosting.yaml` |
+**"This page doesn't exist · 404 NOT_FOUND · region:trace-id" is Vercel's own deployment/edge error, not a NeighbourLink/Firebase page.** [Vercel's NOT_FOUND documentation](https://vercel.com/docs/errors/not_found) lists an incorrect URL, a deployment that doesn't exist or is unavailable, and permissions as things to check. A missing Firebase collection would show inside NeighbourLink, not as Vercel's branded 404.
 
-Every admin edit is written to Firestore, and all connected browsers receive it through `onSnapshot` listeners.
+### Fix it in this order
 
-## 1. Configuration (already done)
+1. **Vercel → Project → Deployments:** Find the latest **Ready** production deployment, and click **Visit**. Use the exact URL Vercel gives you. If there is no Ready deployment, inspect the deployment's **Build Logs**, fix the error and redeploy.
+2. **Vercel → Project → Settings → Build and Deployment:**
+   - **Root Directory:** repository root (the folder containing `package.json`, `next.config.ts`, `src/app` and `vercel.json`), not `src`, `public`, `.next` or a subfolder. Leave the Root Directory field blank if this app is at the repository root.
+   - **Framework Preset:** **Next.js**. `vercel.json` also sets `"framework": "nextjs"` for new deployments.
+   - **Build Command:** `npm run build` (`vercel.json` sets this).
+   - **Output Directory:** **disable Override**. Let Vercel's Next.js builder handle build output. Do NOT set `public`, `out`, `.next/standalone`, or a manual rewrite to `index.html`.
+   - **Install Command:** use the detected default (`npm install` for this project).
+3. **Redeploy after any setting changes** (Deployments → newest deployment → `…` → Redeploy) or push the updated code to the connected Git branch. Check the build log for `Route (app)` with a `/` route. A successful local build does not automatically redeploy your Vercel project.
+4. **If Visit works but your `*.vercel.app` URL still says NOT_FOUND:** the URL may belong to another project, refer to a removed deployment, or lack a production domain assignment. In Vercel → Project → Settings → **Domains**, check which domain is assigned to THIS project. Copy the exact production URL from the successful deployment, or assign the correct domain there. For custom domains, also check DNS.
+5. **Test `https://YOUR-READY-DEPLOYMENT.vercel.app/api/health`.** A successful app response is JSON with `"status":"ok"` and `"firebaseConfigured":true`. Vercel's own HTML 404 on `/api/health` means routing/deployment/domain is still incorrect; the request did not reach this app.
 
-`.env.local` holds your web config. The same public values are in `apphosting.yaml` for deployment.
-These values identify the project and are safe to ship to browsers. Security comes from the rules.
+> No code change can restore a deleted deployment, correct a typo in the URL, attach your domain to the right Vercel project, or change a project's Root Directory in your Vercel account. Those are dashboard/CLI actions. The repository now declares the correct framework and build command, but you must redeploy it to the correct project.
 
-**Never** add Admin SDK service-account keys to `NEXT_PUBLIC_*` variables, to this repository, or to any client file.
+## Vercel project settings and environment
 
-## 2. Firebase Console — one-time manual steps (requires your account)
+- **Framework:** Next.js · **Root Directory:** repo root · **Build:** `npm run build` · **Output Directory override:** OFF · **Node version:** Node 22 or 24 LTS (the Firebase SDK and its transitive packages are pinned to versions supporting Node 22).
+- The public Firebase web config is included in `.env.production`, so a Git-based Vercel production build gets the correct project ID even though `.env.local` is (correctly) git-ignored. These are *public web identifiers*, not Admin SDK secrets. `apphosting.yaml` is for Firebase App Hosting only; Vercel does not use it.
+- If you set `NEXT_PUBLIC_FIREBASE_*` variables in **Vercel → Settings → Environment Variables**, set them for **Production and Preview**, make sure they match project `neighborlink-71fef`, and redeploy: Next.js inlines public variables at build time. Values configured in Vercel take precedence over `.env.production`.
+- **Never** put Admin SDK service-account JSON or private keys in `NEXT_PUBLIC_*`, `.env.production`, client code, or the repo. Firebase web API keys do not grant Firestore access; `firestore.rules` and `storage.rules` enforce permissions.
 
-1. **Authentication → Sign-in method:** enable **Email/Password**.
-2. **Authentication → Settings → Authorized domains:** `localhost` is included. Add your hosted domain (for example `neighborlink-71fef.web.app` and any custom domain).
-3. **Firestore Database:** create the database (production mode, region closest to Nigeria, e.g. `europe-west1` or `africa-south1` if available).
-4. **Storage:** get started (production mode).
-5. **Project settings → Cloud Messaging → Web configuration:** generate a **Web Push certificate (VAPID key)** and paste it into `NEXT_PUBLIC_FIREBASE_VAPID_KEY` in `.env.local` and `apphosting.yaml`. Push stays disabled until this is set.
-6. **Google Analytics:** already linked via `measurementId`.
-
-## 3. Firebase CLI — deploy rules and indexes
-
-```bash
-npm install -g firebase-tools     # once
-firebase login                     # opens your browser — needs your Google account
-firebase use neighborlink-71fef    # uses .firebaserc
-firebase deploy --only firestore:rules,firestore:indexes,storage
-```
-
-Composite indexes take a few minutes to build. Check status under **Firestore → Indexes**. Lists remain empty until the indexes are ready.
-
-## 4. Deploy the web app (Firebase App Hosting)
-
-Next.js server rendering runs on **Firebase App Hosting**. Initialise it once:
-
-```bash
-firebase init apphosting
-```
-
-Choose project `neighborlink-71fef`, create a backend (for example `neighborlink`), region, and root directory `/`. Connect your GitHub repository, which the CLI or console will guide you through. Every push to the chosen branch then builds and deploys automatically.
-
-Manual deploy from the CLI after the backend exists:
-
-```bash
-firebase deploy --only apphosting
-```
-
-The `apphosting.yaml` env block supplies the public Firebase config at build and run time. Add `NEXT_PUBLIC_FIREBASE_VAPID_KEY` there once you have it.
-
-> Alternative: `npm run build` followed by any Node host with `npm run start` and the same `NEXT_PUBLIC_*` variables.
-
-## 5. Create the first administrator (one time)
-
-Public sign-up can only create `resident` or `business` accounts. This is enforced by the rules, so admin access can't be self-granted.
-
-1. Register your admin account on the site (or add a user in **Authentication → Users**).
-2. Open **Firestore → `users` → {your uid}**.
-3. Change the `role` field from `resident` to `admin` and save.
-4. Log in again. **Admin** appears in the header, and `/dashboard` is unlocked.
-
-## 6. First-time content
-
-Open `/dashboard → Overview` and press **Initialise defaults**. This saves the built-in categories, neighbourhoods and legal pages to Firestore so you can edit them. Existing documents are never overwritten.
-
-## 7. Local development
+### Deploy from CLI (alternative to Git)
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000
-```
-
-## 8. Production checks
-
-```bash
 npx next typegen
 npm exec tsc -- --noEmit --pretty false
 npm run build
+npx vercel login
+npx vercel link                # link THIS repository root to the right Vercel project
+npx vercel --prod              # create/assign the production deployment
 ```
 
-## Data model (Cloud Firestore)
+`vercel link` and `vercel --prod` require your Vercel login and account access. When linking, verify the project name and team, then open the URL printed by Vercel. A successful `npm run build` alone does not publish anything to your `.vercel.app` URL.
 
-| Collection / doc | Purpose | Public read? |
+## Set up Firebase (separate from Vercel hosting)
+
+1. In **Firebase Console → Authentication → Sign-in method**, enable **Email/Password**.
+2. In **Authentication → Settings → Authorized domains**, add the actual `*.vercel.app` production domain from Vercel **Settings → Domains** and any custom domain. Firebase Auth will reject sign-in on an unapproved domain even if the page loads.
+3. Create the **Cloud Firestore (default) database**, using production mode, and enable **Cloud Storage**. The site can render before this, but live listings, signup profiles and admin tools need them.
+4. Apply the project rules and indexes (after authenticating with your Firebase account):
+
+```bash
+npm install -g firebase-tools
+firebase login
+firebase use neighborlink-71fef
+firebase deploy --only firestore:rules,firestore:indexes,storage
+```
+
+5. Wait for composite indexes to finish building in **Firestore → Indexes**.
+6. Register a normal account, then promote the **first** admin via Firebase Console → Firestore → `users/{your UID}` → change `role` from `resident` to `admin`. Only an existing admin may grant further admin rights from the dashboard. Public sign-up cannot create an admin.
+7. In `/dashboard → Overview`, choose **Initialise defaults** to make the built-in categories, neighbourhoods, and legal pages editable in Firestore. Existing documents are never overwritten.
+8. Optional web push: generate a Web Push (VAPID) key in Firebase Console → Project Settings → Cloud Messaging. Add `NEXT_PUBLIC_FIREBASE_VAPID_KEY` in Vercel → Settings → Environment Variables and redeploy. Sending notifications requires a trusted Cloud Function; the browser only subscribes.
+
+## Local development
+
+```bash
+npm install
+cp .env.example .env.local   # supply your public Firebase web config for local dev
+npm run dev
+```
+
+`.env.production` is loaded for production builds, not local `next dev`. `.env.local` is intentionally untracked.
+
+## Data model
+
+| Firestore collection / doc | Purpose | Public read? |
 |---|---|---|
-| `users/{uid}` | Private profile & role | Owner + admin |
-| `siteSettings/main` | Name, logo, colours, hero, contact, SEO, nav, footer, social | Yes |
+| `users/{uid}` | Private profile and role | Owner + admin |
+| `siteSettings/main` | Name, logo, colours, hero, contact, SEO, nav, footer | Yes |
 | `categories/{slug}`, `neighbourhoods/{slug}` | Directory taxonomy | Yes |
-| `businesses/{id}` | Listings (pending → approved) | Approved only |
-| `reviews/{id}` | Ratings & comments on approved listings | Yes |
-| `helpPosts/{id}` | Community requests & offers | Yes |
-| `announcements/{id}` | Published updates | Published only |
-| `legalPages/{privacy\|terms}` | Legal text | Yes |
+| `businesses/{id}` | Listings pending approval / approved | Approved only |
+| `reviews/{id}` | Reviews of approved businesses | Yes |
+| `helpPosts/{id}` | Community requests / offers | Yes |
+| `announcements/{id}` | Published neighbourhood updates | Published only |
+| `legalPages/{privacy\|terms}` | Legal content | Yes |
 | `reports/{id}` | Moderation reports | Admin |
 | `contactMessages/{id}` | Contact form submissions | Admin |
 | `activityLogs/{id}` | Audit trail | Admin |
 
-## Security summary
+## Security and operations
 
-- Roles live only in `users/{uid}.role`. Owners can switch between resident and business, but can never write `admin`, unsuspend themselves, or change email or createdAt. The rules enforce this.
-- Business owners can't approve or feature their own listing. Every edit returns it to `pending`.
-- Suspended accounts are signed out automatically and their writes are rejected.
-- Image uploads are validated in the browser and by Storage rules: JPEG, PNG, WEBP or GIF, maximum 5 MB, and each user can only write into their own folder.
-- Account deletion requires password re-authentication, then removes the user's listings, posts, reviews, photos and profile before the Auth account.
-- Firestore lists are limited to queries the rules can verify (for example `status == 'approved'`).
+- Firestore/Storage rules are provided in the repo and must be deployed to Firebase separately from Vercel.
+- Business owners cannot approve their own listings; edits return listings to pending review. Public registration cannot grant admin access.
+- Images are validated by client code **and** Storage rules: JPEG/PNG/WEBP/GIF under 5 MB, in owner-specific folders.
+- Account deletion requires recent password authentication and removes the user's content and photos.
+- Vercel only hosts the Next.js app. Firebase owns the data. Failures to load Firestore after the site is visible are a separate issue from Vercel's deployment 404.
+- Official email and social handles are intentionally empty. Add them when they exist in Dashboard → Website settings.
 
-## Items requiring your credentials or approval
-
-1. Firebase login and deployment (`firebase login`, `firebase deploy`, `firebase init apphosting`) — requires your Google account.
-2. Enabling Email/Password sign-in and adding authorised domains.
-3. Creating the Firestore and Storage databases in the console.
-4. Generating the Web Push (VAPID) key for notifications.
-5. Promoting the first administrator (step 5 above).
-6. Official email address and social-media handles. None exist yet, so they are left blank and can be added in **Dashboard → Website settings**.
-7. Optional: server-side push sending and auth-user deletion by administrators, which need Cloud Functions with the Admin SDK. Those credentials must stay on the server.
-
-## Contact
-
-Phone: +2349030192034 · Ibadan, Oyo State, Nigeria.
-NeighbourLink is not an emergency service. In an emergency call **112** (Police) or **122** (FRSC).
+**Emergency disclaimer:** NeighbourLink is not an emergency service. In an emergency call **112** (Police) or **122** (FRSC).
