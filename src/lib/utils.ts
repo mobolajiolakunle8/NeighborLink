@@ -86,17 +86,41 @@ const ERROR_MESSAGES: Record<string, string> = {
   "auth/requires-recent-login": "For your security, please log out, log in again and retry.",
   "auth/invalid-api-key": "The Firebase API key is invalid. Check your environment variables.",
   "auth/operation-not-allowed": "Email/password sign-in is not enabled in Firebase yet.",
+  "auth/api-key-not-valid.-please-pass-a-valid-api-key.": "The Firebase API key is invalid. Check the NEXT_PUBLIC_FIREBASE_* settings.",
+  "auth/configuration-not-found": "Firebase Authentication isn't set up yet. Site owner: enable Email/Password sign-in in the Firebase Console.",
+  "auth/unauthorized-domain": "This website address isn't authorised in Firebase yet. Site owner: add it under Authentication → Settings → Authorized domains.",
+  "auth/unauthorized-continue-uri": "This website address isn't authorised in Firebase yet. Site owner: add it under Authentication → Settings → Authorized domains.",
   "storage/unauthorized": "You are not allowed to upload this file.",
   "storage/retry-limit-exceeded": "Upload timed out. Please try a smaller image.",
 };
+
+/** Project-setup problems get explicit, actionable messages instead of a misleading generic one. */
+const SETUP_PATTERNS: Array<[RegExp, string]> = [
+  [
+    /has not been used in project|SERVICE_DISABLED|before or it is disabled/i,
+    "NeighbourLink's database isn't switched on yet. Site owner: create Cloud Firestore in the Firebase Console, then refresh.",
+  ],
+  [
+    /database \(default\) does not exist|does not exist for project/i,
+    "NeighbourLink's database hasn't been created yet. Site owner: create Cloud Firestore in the Firebase Console, then refresh.",
+  ],
+  [
+    /requires an index|index is currently building/i,
+    "This list is still being prepared while a database index builds. Please try again in a few minutes.",
+  ],
+];
 
 /** Maps Firebase and application errors to a message that is safe to show users. */
 export function friendlyError(err: unknown): string {
   const code =
     typeof err === "object" && err !== null && "code" in err ? String((err as { code: unknown }).code) : "";
-  if (code && ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
-  if (err instanceof Error && err.message && !code.startsWith("auth/") && !code.startsWith("storage/")) {
-    return err.message;
+  const message =
+    typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "";
+  for (const [pattern, text] of SETUP_PATTERNS) {
+    if (pattern.test(message)) return text;
   }
+  if (code && ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
+  // Errors thrown by our own code (validation etc.) carry no Firebase code and are written for users.
+  if (!code && message) return message;
   return "Something went wrong. Please try again.";
 }

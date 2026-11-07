@@ -5,7 +5,7 @@ import { doc, onSnapshot, type DocumentData, type Query } from "firebase/firesto
 import { getDb, isFirebaseConfigured } from "./firebase";
 import { friendlyError } from "./utils";
 
-const NOT_CONFIGURED = "Firebase is not configured. Check the NEXT_PUBLIC_FIREBASE_* build-time variables and redeploy on Vercel.";
+const NOT_CONFIGURED = "Firebase is not configured yet. Add your NEXT_PUBLIC_FIREBASE_* variables.";
 
 /**
  * Live collection/query subscription. `key` identifies the query: pass null to pause,

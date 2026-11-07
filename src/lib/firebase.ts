@@ -39,7 +39,7 @@ let storage: FirebaseStorage | undefined;
 
 export function getFirebaseApp(): FirebaseApp {
   if (!isFirebaseConfigured) {
-    throw new Error("Firebase is not configured. Check .env.local for local development, or .env.production / Vercel build-time environment variables for deployment.");
+    throw new Error("Firebase is not configured. Add the NEXT_PUBLIC_FIREBASE_* variables to .env.local.");
   }
   if (!app) app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   return app;
