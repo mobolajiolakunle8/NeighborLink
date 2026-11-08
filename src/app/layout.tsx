@@ -1,9 +1,20 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import Providers from "@/components/Providers";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
+import { BackToTop, ScrollProgress } from "@/components/motion";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#172D2A" },
+    { media: "(prefers-color-scheme: dark)", color: "#172D2A" },
+  ],
+};
 import { DEFAULT_SETTINGS } from "@/lib/defaults";
 import { fetchPublicSettings } from "@/lib/server-settings";
 
@@ -26,12 +37,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet" />
       </head>
-      <body className="flex min-h-screen flex-col bg-cream text-forest antialiased">
+      <body className="flex min-h-screen min-w-0 flex-col overflow-x-clip bg-cream text-forest antialiased">
         <Providers>
           <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-full focus:bg-gold focus:px-4 focus:py-2 focus:font-bold focus:text-forest">Skip to content</a>
+          <ScrollProgress />
           <Header />
-          <main id="main" className="flex-1">{children}</main>
+          <main id="main" className="min-w-0 flex-1">{children}</main>
           <Footer />
+          <BackToTop />
         </Providers>
       </body>
     </html>

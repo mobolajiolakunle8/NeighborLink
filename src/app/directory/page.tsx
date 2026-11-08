@@ -10,6 +10,7 @@ import { useLiveList, usePagination } from "@/lib/hooks";
 import { hasBusinessLocation, sortByTimestampDesc, toDate } from "@/lib/utils";
 import type { Business } from "@/lib/types";
 import BusinessCard from "@/components/BusinessCard";
+import { Reveal } from "@/components/motion";
 import SetupNotice from "@/components/SetupNotice";
 import { CardSkeleton, EmptyState, Pagination } from "@/components/ui";
 
@@ -66,20 +67,24 @@ export default function DirectoryPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
-      <p className="eyebrow">Service directory</p>
-      <h1 className="section-title mt-2">Find local businesses</h1>
-      <p className="mt-2 max-w-2xl text-muted">Search trusted businesses across Ibadan. Every listing is reviewed by our team before it appears here.</p>
+      <Reveal variant="up">
+        <p className="eyebrow">Service directory</p>
+        <h1 className="section-title mt-2">Find local businesses</h1>
+        <p className="mt-2 max-w-2xl text-muted">Search trusted businesses across Ibadan. Every listing is reviewed by our team before it appears here.</p>
+      </Reveal>
+      <Reveal variant="up" delay={100}>
       <form onSubmit={onSearch} role="search" className="card mt-7 grid gap-3 p-4 sm:p-5 md:grid-cols-[1fr_200px_200px_160px]">
         <label className="relative"><span className="sr-only">Search by name or service</span><Search size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#8A9A8F]" aria-hidden /><input value={draft} onChange={e => setDraft(e.target.value)} placeholder="Search by name or service…" className="input !pl-10" /></label>
         <label><span className="sr-only">Category</span><select value={category} onChange={e => setCategory(e.target.value)} className="input"><option value="">All categories</option>{activeCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
         <label><span className="sr-only">Neighbourhood</span><select value={hood} onChange={e => setHood(e.target.value)} className="input"><option value="">All neighbourhoods</option>{activeNeighbourhoods.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
         <div className="flex gap-2"><button type="submit" className="btn-primary flex-1">Search</button><button type="button" onClick={reset} className="btn-ghost border border-line" disabled={!hasFilters && !draft && sort === "featured"}>Reset</button></div>
       </form>
+      </Reveal>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" className={`tab-btn flex items-center gap-1.5 !py-2 !text-xs ${view === "grid" ? "active" : ""}`} onClick={() => setView("grid")}><LayoutGrid size={14} />List</button><button type="button" className={`tab-btn flex items-center gap-1.5 !py-2 !text-xs ${view === "map" ? "active" : ""}`} onClick={() => setView("map")}><Map size={14} />Map ({mapped.length})</button></div><p className="text-sm font-bold text-muted" aria-live="polite">{listing.loading ? "Loading listings…" : `${filtered.length} listing${filtered.length === 1 ? "" : "s"} found`}</p><label className="flex items-center gap-2 text-sm font-bold text-muted">Sort by<select value={sort} onChange={e => setSort(e.target.value as SortKey)} className="input !w-auto !py-2 text-sm"><option value="featured">Featured first</option><option value="newest">Newest</option><option value="popular">Most viewed</option><option value="az">A → Z</option></select></label></div>
       <div className="mt-5">
         {listing.problem ? <SetupNotice problem={listing.problem} /> : listing.loading ? <CardSkeleton count={6} /> : pager.total === 0 ? (
           <EmptyState icon={Store} title="No businesses match your search" text={hasFilters ? "Try a different keyword, category or neighbourhood." : "No approved listings yet. Check back soon."} action={hasFilters ? <button type="button" onClick={reset} className="btn-primary">Clear filters</button> : undefined} />
-        ) : view === "map" ? <div className="space-y-3"><MapPanel points={mapped} height={520} /><p className="text-xs text-muted">{mapped.length} of {filtered.length} matching businesses have a saved location. Owners can add a pin from their listing form.</p></div> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{pager.pageItems.map(b => <BusinessCard key={b.id} business={b} categoryName={categoryName(b.categoryId)} neighbourhoodName={neighbourhoodName(b.neighbourhoodId)} />)}</div>}
+        ) : view === "map" ? <Reveal variant="fade"><div className="space-y-3"><MapPanel points={mapped} height={520} /><p className="text-xs text-muted">{mapped.length} of {filtered.length} matching businesses have a saved location. Owners can add a pin from their listing form.</p></div></Reveal> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{pager.pageItems.map((b, i) => <Reveal key={b.id} variant="up" delay={Math.min(i * 60, 360)}><BusinessCard business={b} categoryName={categoryName(b.categoryId)} neighbourhoodName={neighbourhoodName(b.neighbourhoodId)} /></Reveal>)}</div>}
       </div>
       {view === "grid" && <Pagination page={pager.page} pages={pager.pages} onChange={setPage} />}
       <p className="mt-8 text-center text-sm text-muted">Own a business? <a href="/register" className="font-bold underline">Create a free account</a> to list it.</p>

@@ -8,6 +8,7 @@ import { ArrowLeft, Clock, Eye, Flag, Globe, Mail, MapPin, MessageCircle, Naviga
 import { TrustBadge } from "@/components/BusinessCard";
 import { MessageButton, SaveButton, ShareButton } from "@/components/MemberActions";
 import MapPanel from "@/components/MapPanel";
+import { Reveal } from "@/components/motion";
 import { useAuth } from "@/context/AuthContext";
 import { useSite } from "@/context/SiteContext";
 import { getDb } from "@/lib/firebase";
@@ -108,14 +109,16 @@ export default function BusinessPage() {
           <p className="mt-3 text-xs text-[#8A9A8F]">Listed by {b.ownerName || "a business owner"} • {formatDate(b.createdAt, { dateStyle: "medium" })}</p>
         </div>
       </article>
-      <section className="card mt-6 p-6 sm:p-8" aria-labelledby="location-title">
+      <Reveal variant="up"><section className="card mt-6 p-6 sm:p-8" aria-labelledby="location-title">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Find this business</p><h2 id="location-title" className="mt-1 text-xl font-extrabold">Business location</h2></div>{located && <a href={directions} target="_blank" rel="noopener noreferrer" className="btn-outline !py-2 !text-sm"><Navigation size={15} />Get directions</a>}</div>
         {located ? <><div className="mt-4"><MapPanel points={[{ id: b.id, lat: b.latitude!, lng: b.longitude!, title: b.name, subtitle: b.address || area, href: `/business/${b.id}` }]} height={320} label={`Location of ${b.name}`} /></div><p className="mt-3 text-xs text-muted">{b.address ? `${b.address} · ` : ""}The map reflects the saved coordinates. Owner edits appear publicly after review. Confirm the address before travelling.</p></> : <div className="mt-4 rounded-xl bg-sage/60 p-5 text-sm text-muted"><MapPin size={22} className="mb-2" /><p className="font-bold text-forest">Map location not added yet</p><p className="mt-1">{isOwner || isAdmin ? "Add a pin in the listing form to show this business on the map." : "Contact the admin team for help finding this business."}</p>{isOwner && <Link href="/profile#my-listings" className="btn-primary mt-3 !py-2 !text-sm">Add location</Link>}</div>}
-      </section>
+      </section></Reveal>
+      <Reveal variant="up" delay={100}>
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
         <section className="card p-6" aria-labelledby="reviews-title"><h2 id="reviews-title" className="text-xl font-extrabold">Reviews ({reviews.data.length})</h2>{reviews.loading ? <div className="mt-4 space-y-3"><div className="skeleton h-16" /><div className="skeleton h-16" /></div> : reviews.error ? <div className="mt-4"><Alert kind="error">{reviews.error}</Alert></div> : reviews.data.length === 0 ? <p className="mt-3 text-sm text-muted">No reviews yet. Be the first to share your experience.</p> : <ul className="mt-4 space-y-4">{reviews.data.map(r => <li key={r.id} className="border-b border-[#EEF1ED] pb-4 last:border-0"><p className="flex flex-wrap items-center gap-2 text-sm font-bold">{r.authorName}<span className="flex" aria-label={`${r.rating} out of 5 stars`}>{Array.from({ length: 5 }).map((_, i) => <Star key={i} size={14} className={i < r.rating ? "fill-gold text-gold" : "text-[#C9D6CB]"} aria-hidden />)}</span></p><p className="mt-1 text-sm text-forest/85">{r.comment}</p><p className="mt-1 text-xs text-[#8A9A8F]">{formatDate(r.createdAt, { dateStyle: "medium" })}</p></li>)}</ul>}</section>
         <section className="card h-fit p-6" aria-labelledby="write-review"><h2 id="write-review" className="text-xl font-extrabold">Write a review</h2>{!firebaseUser ? <div className="mt-4 space-y-3"><p className="text-sm text-muted">Log in to share your experience with neighbours.</p><Link href="/login" className="btn-primary w-full">Log in to review</Link></div> : isOwner ? <p className="mt-4 text-sm text-muted">You can&apos;t review your own business.</p> : <form onSubmit={submitReview} className="mt-4 space-y-3" noValidate><fieldset><legend className="label">Your rating</legend><div className="flex gap-1">{[1, 2, 3, 4, 5].map(n => <button type="button" key={n} onClick={() => setRating(n)} aria-label={`${n} star${n > 1 ? "s" : ""}`} aria-pressed={rating === n} className="rounded p-1"><Star size={26} className={n <= rating ? "fill-gold text-gold" : "text-[#C9D6CB]"} aria-hidden /></button>)}</div></fieldset><Field label="Your review"><textarea value={comment} onChange={e => setComment(e.target.value)} rows={4} maxLength={1500} placeholder="How was your experience?" className="input" /></Field><button type="submit" disabled={busy} className="btn-primary w-full">{busy ? <><Spinner /> Submitting…</> : "Submit review"}</button></form>}<div className="mt-4"><span className="sr-only">Notifications</span>{notice && <Alert kind={notice.kind}>{notice.text}</Alert>}</div></section>
       </div>
+      </Reveal>
     </div>
   );
 }

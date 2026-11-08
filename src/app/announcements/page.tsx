@@ -9,6 +9,7 @@ import { useLiveList } from "@/lib/hooks";
 import type { Announcement } from "@/lib/types";
 import { formatDate, sortByTimestampDesc } from "@/lib/utils";
 import SetupNotice from "@/components/SetupNotice";
+import { Reveal } from "@/components/motion";
 import { CardSkeleton, EmptyState } from "@/components/ui";
 
 const PAGE = 12;
@@ -32,9 +33,11 @@ export default function AnnouncementsPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
-      <p className="eyebrow">Announcements</p>
-      <h1 className="section-title mt-2">Neighbourhood updates</h1>
-      <p className="mt-2 text-muted">Official updates from the NeighbourLink team for Ibadan residents.</p>
+      <Reveal variant="up">
+        <p className="eyebrow">Announcements</p>
+        <h1 className="section-title mt-2">Neighbourhood updates</h1>
+        <p className="mt-2 text-muted">Official updates from the NeighbourLink team for Ibadan residents.</p>
+      </Reveal>
 
       <div className="mt-8">
         {anns.problem ? (
@@ -45,8 +48,9 @@ export default function AnnouncementsPage() {
           <EmptyState icon={Megaphone} title="No announcements yet" text="Check back soon. Updates will appear here as soon as they are published." />
         ) : (
           <div className="space-y-5">
-            {ordered.map((a) => (
-              <article key={a.id} className="card overflow-hidden">
+            {ordered.map((a, i) => (
+              <Reveal key={a.id} variant="up" delay={Math.min(i * 80, 320)}>
+              <article className="card card-hover overflow-hidden">
                 {a.imageUrl && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={a.imageUrl} alt="" loading="lazy" className="h-56 w-full object-cover" />
@@ -60,6 +64,7 @@ export default function AnnouncementsPage() {
                   <p className="mt-3 whitespace-pre-line leading-relaxed text-forest/85">{a.body}</p>
                 </div>
               </article>
+              </Reveal>
             ))}
           </div>
         )}

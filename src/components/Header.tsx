@@ -18,7 +18,22 @@ export default function Header() {
     { href: "/notifications", label: "Updates", icon: Bell, count: unreadNotifications },
   ];
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
+
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => setScrolled(window.scrollY > 12));
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, []);
   const navLinks = settings.navLinks.filter(l => l.enabled);
   const displayName = profile?.name ?? firebaseUser?.displayName ?? "";
   const phoneHref = `tel:${settings.contactPhone.replace(/[\s-]/g, "")}`;
@@ -32,8 +47,8 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-50">
       {settings.bannerText && <div className="bg-gold px-4 py-2 text-center text-sm font-bold text-forest">{settings.bannerText}</div>}
-      <div className="bg-forest text-cream">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <div className={`bg-forest text-cream transition-shadow duration-300 ${scrolled ? "shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]" : ""}`}>
+        <div className={`mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 transition-all duration-300 sm:px-6 ${scrolled ? "py-2" : "py-3"}`}>
           <Link href="/" className="flex min-w-0 items-center gap-3" aria-label={`${settings.siteName} — home`}>
             {settings.logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -76,8 +91,14 @@ export default function Header() {
           </div>
           <button type="button" className="rounded-lg p-2 transition hover:bg-white/10 lg:hidden" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-controls="mobile-nav" aria-label={open ? "Close menu" : "Open menu"}>{open ? <X aria-hidden /> : <Menu aria-hidden />}</button>
         </div>
-        {open && (
-          <div id="mobile-nav" className="space-y-1 border-t border-white/10 px-4 pb-4 pt-3 lg:hidden">
+        <div
+          id="mobile-nav"
+          className={`grid overflow-hidden transition-[grid-template-rows,opacity] duration-300 ease-out lg:hidden ${
+            open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          }`}
+        >
+          <div className="min-h-0 overflow-hidden">
+          <div className="space-y-1 border-t border-white/10 px-4 pb-4 pt-3">
             {navLinks.map(l => <Link key={`${l.label}-${l.href}`} href={l.href} className="block rounded-xl px-3 py-2.5 font-semibold transition hover:bg-white/10">{l.label}</Link>)}
             <div className="flex flex-wrap gap-2 pt-3">
               {firebaseUser ? (
@@ -96,7 +117,8 @@ export default function Header() {
             </div>
             <a href={phoneHref} className="flex items-center gap-2 pt-3 text-sm font-bold text-gold"><Phone size={15} aria-hidden />{settings.contactPhone}</a>
           </div>
-        )}
+          </div>
+        </div>
       </div>
     </header>
   );

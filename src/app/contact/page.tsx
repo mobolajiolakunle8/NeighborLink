@@ -9,6 +9,7 @@ import { useSite } from "@/context/SiteContext";
 import { startSupportMessage, submitContact } from "@/lib/api";
 import { friendlyError, isEmail, isPhone } from "@/lib/utils";
 import { Alert, Field, Spinner } from "@/components/ui";
+import { Reveal } from "@/components/motion";
 
 const EMPTY = { name: "", email: "", phone: "", subject: "", message: "" };
 
@@ -53,12 +54,15 @@ export default function ContactPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-      <p className="eyebrow">Contact</p>
-      <h1 className="section-title mt-2">Talk to us</h1>
-      <p className="mt-2 max-w-2xl text-muted">Questions about a listing, your account or NeighbourLink in general? Messages go to the admin team. Signed-in members receive replies in their profile Messages box.</p>
+      <Reveal variant="up">
+        <p className="eyebrow">Contact</p>
+        <h1 className="section-title mt-2">Talk to us</h1>
+        <p className="mt-2 max-w-2xl text-muted">Questions about a listing, your account or NeighbourLink in general? Messages go to the admin team. Signed-in members receive replies in their profile Messages box.</p>
+      </Reveal>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[380px_1fr]">
-        <div className="space-y-4">
+        <Reveal variant="left" className="space-y-4">
+          <div className="space-y-4">
           <a href={phoneHref} className="card card-hover flex items-center gap-4 p-6">
             <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-forest text-gold"><Phone size={22} aria-hidden /></span>
             <span><span className="block text-xs font-bold uppercase tracking-wide text-muted">Call us</span><span className="text-lg font-extrabold">{settings.contactPhone}</span></span>
@@ -75,8 +79,10 @@ export default function ContactPage() {
             <ShieldAlert size={18} className="mt-0.5 shrink-0" aria-hidden />
             {settings.emergencyDisclaimer}
           </div>
-        </div>
+          </div>
+        </Reveal>
 
+        <Reveal variant="right" delay={120}>
         <form onSubmit={onSubmit} noValidate className="card p-6 sm:p-8" aria-label="Contact form">
           <h2 className="text-xl font-extrabold">Message the admin team</h2>
           {firebaseUser ? <div className="mt-3"><Alert kind="info">Sending as {profile?.name || firebaseUser.email}. Replies appear in <Link href="/profile#messages" className="underline">your profile Messages box</Link> and Updates.</Alert></div> : <p className="mt-2 text-sm text-muted">Want replies in your profile message box? <Link href="/login?next=/contact" className="font-bold underline">Log in first</Link>.</p>}
@@ -95,6 +101,7 @@ export default function ContactPage() {
             {saving ? <><Spinner /> Sending…</> : <><Send size={16} aria-hidden /> Send to admin</>}
           </button>
         </form>
+        </Reveal>
       </div>
     </div>
   );
