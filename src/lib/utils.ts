@@ -33,11 +33,12 @@ export function isHttpUrl(value: string): boolean {
 export function safeHex(value: string | undefined, fallback: string): string { return value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback; }
 
 export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-/** Client-side image validation. Storage rules enforce the same limits server-side. */
+export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+/** Validate the chosen source image; every accepted source is recompressed before upload. */
 export function validateImageFile(file: File): string | null {
-  if (!IMAGE_TYPES.includes(file.type)) return "Please upload a JPG, PNG, WEBP or GIF image.";
-  if (file.size > MAX_IMAGE_BYTES) return "Image must be 5 MB or smaller.";
+  if (!IMAGE_TYPES.includes(file.type)) return "Please choose a JPG, PNG, WEBP or GIF image.";
+  if (file.size <= 0) return "This image file is empty.";
+  if (file.size > MAX_IMAGE_BYTES) return "Choose a source image smaller than 25 MB; it will be compressed before upload.";
   return null;
 }
 

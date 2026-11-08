@@ -80,7 +80,7 @@ export default function BusinessPage() {
       <Link href="/directory" className="btn-ghost !px-0"><ArrowLeft size={16} aria-hidden /> Back to directory</Link>
       {b.status !== "approved" && <div className="mt-4"><Alert kind="warning">This listing is {b.status} and is only visible to you and administrators.</Alert></div>}
       <article className="card mt-4 overflow-hidden">
-        <div className="relative h-64 bg-forest sm:h-80">
+        <div className="relative aspect-video bg-forest">
           {b.imageUrl ? <img src={b.imageUrl} alt={b.name} className="h-full w-full object-cover" /> : <div className="grid h-full w-full place-items-center text-gold"><Store size={72} aria-hidden /></div>}
           <div className="absolute bottom-4 left-4 flex flex-wrap gap-2">{categoryName(b.categoryId) && <span className="badge badge-gold">{categoryName(b.categoryId)}</span>}<TrustBadge business={b} />{b.isFeatured && <span className="badge badge-sage">Featured</span>}</div>
         </div>

@@ -72,7 +72,7 @@ export default function BusinessForm({ mode, initial, onDone, onCancel }: { mode
         <Field label="Opening hours"><input className="input" value={form.openingHours} onChange={e => set("openingHours")(e.target.value)} placeholder="Mon–Sat 8am–6pm" /></Field>
         <Field label="Website (https://)" className="sm:col-span-2"><input className="input" value={form.website} onChange={e => set("website")(e.target.value)} placeholder="optional" /></Field>
         <BusinessLocationFields latitude={form.latitude} longitude={form.longitude} onChange={(latitude, longitude) => setForm(f => ({ ...f, latitude, longitude }))} />
-        <div className="sm:col-span-2"><ImageUploadField label="Listing photo" value={form.imageUrl} onChange={set("imageUrl")} folder={`businesses/${firebaseUser?.uid ?? "unknown"}`} hint="JPG, PNG, WEBP or GIF — up to 5 MB." /></div>
+        <div className="sm:col-span-2"><ImageUploadField label="Business cover photo" value={form.imageUrl} onChange={set("imageUrl")} folder={`businesses/${firebaseUser?.uid ?? "unknown"}`} variant="cover" /></div>
       </div>
       {error && <Alert kind="error">{error}</Alert>}
       {mode === "edit" && <Alert kind="warning">Saving changes sends this listing back for admin review before it is shown publicly again.</Alert>}

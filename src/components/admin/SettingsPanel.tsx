@@ -135,7 +135,7 @@ export default function SettingsPanel() {
         {text("siteName", "Website name")}
         {text("tagline", "Tagline")}
         <div className="sm:col-span-2">
-          <ImageUploadField label="Logo" value={form.logoUrl} onChange={(url) => set("logoUrl", url)} folder="site" hint="Square image works best (PNG or WEBP with transparency)." />
+          <ImageUploadField label="Logo" value={form.logoUrl} onChange={(url) => set("logoUrl", url)} folder="site" variant="square" hint="A square image works best." />
         </div>
         {text("bannerText", "Top banner message (leave empty to hide)", undefined, true)}
         {colour("primaryColor", "Primary colour — Deep Forest")}
@@ -149,7 +149,7 @@ export default function SettingsPanel() {
         {text("heroTitle", "Hero headline", undefined, true)}
         {text("heroSubtitle", "Hero text", undefined, true)}
         <div className="sm:col-span-2">
-          <ImageUploadField label="Hero banner image" value={form.heroImageUrl} onChange={(url) => set("heroImageUrl", url)} folder="site" />
+          <ImageUploadField label="Hero banner image" value={form.heroImageUrl} onChange={(url) => set("heroImageUrl", url)} folder="site" variant="cover" />
         </div>
         {text("heroCtaLabel", "Hero button label")}
         {text("ctaTitle", "Call-to-action title")}

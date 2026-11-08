@@ -18,7 +18,7 @@ export function TrustBadge({ business, className = "" }: { business: Business; c
 export default function BusinessCard({ business: b, categoryName, neighbourhoodName }: { business: Business; categoryName: string; neighbourhoodName: string }) {
   return (
     <Link href={`/business/${b.id}`} className="card card-hover group relative flex flex-col overflow-hidden">
-      <div className="relative h-44 overflow-hidden bg-forest">
+      <div className="relative aspect-video overflow-hidden bg-forest">
         {b.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={b.imageUrl} alt={b.name} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />

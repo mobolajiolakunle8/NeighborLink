@@ -163,7 +163,7 @@ export function AnnouncementsPanel() {
         <Field label="Title *"><input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={220} /></Field>
         <Field label="Message *"><textarea className="input" rows={5} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} maxLength={5000} /></Field>
         <Field label="Audience" hint="Choose a neighbourhood to show this on that area's page, or leave as everyone."><select className="input" value={form.neighbourhoodId ?? ""} onChange={(e) => setForm({ ...form, neighbourhoodId: e.target.value })}><option value="">Everyone in Ibadan</option>{activeNeighbourhoods.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select></Field>
-        <ImageUploadField label="Image (optional)" value={form.imageUrl} onChange={(url) => setForm({ ...form, imageUrl: url })} folder="announcements" />
+        <ImageUploadField label="Image (optional)" value={form.imageUrl} onChange={(url) => setForm({ ...form, imageUrl: url })} folder="announcements" variant="cover" />
         <div className="flex flex-wrap gap-4 text-sm font-bold">
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.isPinned} onChange={(e) => setForm({ ...form, isPinned: e.target.checked })} className="h-4 w-4" /> Pin to top</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.isPublished} onChange={(e) => setForm({ ...form, isPublished: e.target.checked })} className="h-4 w-4" /> Published</label>

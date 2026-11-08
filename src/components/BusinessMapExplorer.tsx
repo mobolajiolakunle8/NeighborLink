@@ -36,7 +36,7 @@ export default function BusinessMapExplorer({ businesses, loading = false }: { b
             {!loading && mapped.length === 0 && <div className="rounded-xl bg-sage/60 p-4 text-sm text-muted"><Store size={24} className="mb-2" /><p className="font-bold text-forest">No mapped businesses here yet</p><p className="mt-1 text-xs">Try another filter. Business owners can add a location from their listing form.</p></div>}
           </div>
           {mapped.length > 6 && <Link href={`/directory${directoryQuery.size ? `?${directoryQuery}` : ""}`} className="mt-3 text-xs font-bold underline">See all matching businesses</Link>}
-          <p className="mt-4 border-t border-line pt-3 text-[11px] text-muted">Only businesses with a saved location are shown. Map data © OpenStreetMap contributors.</p>
+          <p className="mt-4 border-t border-line pt-3 text-[11px] text-muted">Only businesses with a saved location are shown. Map data © Google.</p>
         </aside>
       </div>
     </section>

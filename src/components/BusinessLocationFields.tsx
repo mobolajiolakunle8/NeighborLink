@@ -33,7 +33,7 @@ export default function BusinessLocationFields({ latitude, longitude, onChange }
   return (
     <fieldset className="sm:col-span-2 space-y-3 rounded-2xl border border-line bg-sage/30 p-4">
       <legend className="px-1 text-sm font-extrabold">Business location on the map</legend>
-      <p className="text-xs leading-relaxed text-muted">Place the pin at your shop or office. Click the map, enter coordinates, or use your current location while you are at the business. The pin is published only when you save the listing.</p>
+      <p className="text-xs leading-relaxed text-muted">Set the pin at your shop or office: click or drag on the Google map when it is enabled, enter coordinates, or use your current location while you are at the business. Location is published only when the listing is saved and approved.</p>
       <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
         <Field label="Latitude"><input className="input" inputMode="decimal" value={latitude} onChange={e => onChange(e.target.value, longitude)} placeholder="e.g. 7.377500" aria-invalid={!valid} /></Field>
         <Field label="Longitude"><input className="input" inputMode="decimal" value={longitude} onChange={e => onChange(latitude, e.target.value)} placeholder="e.g. 3.947000" aria-invalid={!valid} /></Field>

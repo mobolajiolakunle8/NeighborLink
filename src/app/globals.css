@@ -287,10 +287,25 @@ table.data td {
   background: transparent;
 }
 
-/* Leaflet stays below the sticky header; popups match the site typography. */
-.leaflet-container { z-index: 0; font-family: inherit; }
-.nl-map-pin { background: transparent; border: 0; }
-.nl-map-popup { min-width: 160px; color: #172D2A; }
-.nl-map-popup strong { display: block; font-size: 14px; }
-.nl-map-popup p { margin: 6px 0; color: #5B6B60; font-size: 12px; }
-.nl-map-popup a { color: #172D2A; font-weight: 800; text-decoration: underline; }
+/* Google Maps advanced business pins. */
+.google-map-pin {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #F8F8F5;
+  border-radius: 50% 50% 50% 0;
+  background: #172D2A;
+  box-shadow: 0 2px 8px rgba(0,0,0,.32);
+  transform: rotate(-45deg);
+  cursor: pointer;
+}
+.google-map-pin::after {
+  content: "";
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  top: 4px;
+  left: 4px;
+  border-radius: 50%;
+  background: #D5A85C;
+}
+

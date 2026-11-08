@@ -1,32 +1,33 @@
 rules_version = '2';
 // NeighbourLink — Cloud Storage security rules.
-// Uploads are restricted to real images (JPEG/PNG/WEBP/GIF) up to 5 MB, and users
-// may only write into their own folder. Site branding images are admin-only.
+// The app re-encodes uploads to JPEG/WEBP (normally <=1.5 MB); rules cap files at 2 MB.
+// Members can only write into their own folder. Site branding images are admin-only.
 
 service firebase.storage {
   match /b/{bucket}/o {
     function signedIn() { return request.auth != null; }
     function isAdmin() { return signedIn() && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'; }
-    function isImage() { return request.resource.contentType.matches('image/(jpeg|png|webp|gif)'); }
-    function under5MB() { return request.resource.size < 5 * 1024 * 1024; }
+    // The app canvas-reencodes all uploads to JPEG or WEBP before they reach Storage.
+    function isImage() { return request.resource.contentType.matches('image/(jpeg|webp)'); }
+    function under2MB() { return request.resource.size > 0 && request.resource.size <= 2 * 1024 * 1024; }
     match /businesses/{ownerUid}/{file} {
       allow read: if true;
-      allow create, update: if signedIn() && request.auth.uid == ownerUid && isImage() && under5MB();
+      allow create, update: if signedIn() && request.auth.uid == ownerUid && isImage() && under2MB();
       allow delete: if signedIn() && request.auth.uid == ownerUid;
     }
     match /avatars/{ownerUid}/{file} {
       allow read: if true;
-      allow create, update: if signedIn() && request.auth.uid == ownerUid && isImage() && under5MB();
+      allow create, update: if signedIn() && request.auth.uid == ownerUid && isImage() && under2MB();
       allow delete: if signedIn() && request.auth.uid == ownerUid;
     }
     match /site/{file} {
       allow read: if true;
-      allow create, update: if isAdmin() && isImage() && under5MB();
+      allow create, update: if isAdmin() && isImage() && under2MB();
       allow delete: if isAdmin();
     }
     match /announcements/{file} {
       allow read: if true;
-      allow create, update: if isAdmin() && isImage() && under5MB();
+      allow create, update: if isAdmin() && isImage() && under2MB();
       allow delete: if isAdmin();
     }
   }
