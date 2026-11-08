@@ -9,9 +9,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@firebase/app": "0.16.2",
+    "@firebase/app-compat": "0.5.18",
     "dotenv": "17.3.1",
     "drizzle-orm": "0.45.2",
-    "firebase": "^13.2.0",
+    "firebase": "12.19.0",
     "lucide-react": "^1.70.0",
     "next": "16.2.6",
     "pg": "8.20.0",

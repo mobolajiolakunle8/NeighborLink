@@ -11,21 +11,25 @@ import {
 } from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 import { getAnalytics, isSupported } from "firebase/analytics";
+import webConfig from "@/config/firebase.web.json";
 
 /**
  * Web app configuration, read from NEXT_PUBLIC_* variables (.env.local locally,
  * apphosting.yaml on Firebase App Hosting). These identify the project and are safe
  * to ship to browsers. They are NOT secrets — rules protect the data.
  */
+// NEXT_PUBLIC_* values still win when configured in Vercel / Firebase App Hosting.
+// The committed JSON holds the same PUBLIC web identifiers, so a deployment cannot
+// silently lose its Firebase config if a .env.production file is absent or ignored.
 export const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || webConfig.apiKey,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || webConfig.authDomain,
+  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL || webConfig.databaseURL,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || webConfig.projectId,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || webConfig.storageBucket,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || webConfig.messagingSenderId,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || webConfig.appId,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || webConfig.measurementId,
 };
 
 export const isFirebaseConfigured = Boolean(
@@ -39,7 +43,7 @@ let storage: FirebaseStorage | undefined;
 
 export function getFirebaseApp(): FirebaseApp {
   if (!isFirebaseConfigured) {
-    throw new Error("Firebase is not configured. Add the NEXT_PUBLIC_FIREBASE_* variables to .env.local.");
+    throw new Error("Firebase is not configured. Check .env.local for local development, or .env.production / Vercel build-time environment variables for deployment.");
   }
   if (!app) app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   return app;

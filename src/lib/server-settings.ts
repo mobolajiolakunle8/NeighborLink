@@ -3,6 +3,7 @@
 // appear in search results. Reads are allowed by the public read rule on siteSettings,
 // so no credentials are needed and nothing private is exposed.
 import type { SiteSettings } from "./types";
+import webConfig from "@/config/firebase.web.json";
 
 type FsValue = {
   stringValue?: string;
@@ -28,8 +29,8 @@ function fromFields(fields: Record<string, FsValue>): Record<string, unknown> {
 }
 
 export async function fetchPublicSettings(): Promise<Partial<SiteSettings> | null> {
-  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-  const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || webConfig.projectId;
+  const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY || webConfig.apiKey;
   if (!projectId || !apiKey) return null;
   try {
     const url =
