@@ -12,6 +12,7 @@ import { useLiveList } from "@/lib/hooks";
 import type { Announcement, Business, HelpPost } from "@/lib/types";
 import { formatDate, sortByTimestampDesc } from "@/lib/utils";
 import BusinessCard from "@/components/BusinessCard";
+import BusinessMapExplorer from "@/components/BusinessMapExplorer";
 import SetupNotice from "@/components/SetupNotice";
 import { Alert, CardSkeleton, EmptyState, SectionHeader } from "@/components/ui";
 
@@ -22,14 +23,14 @@ export default function HomePage() {
   // so the homepage works even while Firestore indexes are still being built.
   const businesses = useLiveList<Business>(
     "home-biz",
-    () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), orderBy("createdAt", "desc"), limit(40)),
+    () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), orderBy("createdAt", "desc"), limit(200)),
     {
-      fallback: () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), limit(40)),
+      fallback: () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), limit(200)),
       sort: (rows) => sortByTimestampDesc(rows, "createdAt"),
     },
   );
   const help = useLiveList<HelpPost>("home-help", () =>
-    query(collection(getDb(), "helpPosts"), orderBy("createdAt", "desc"), limit(40)),
+    query(collection(getDb(), "helpPosts"), orderBy("createdAt", "desc"), limit(200)),
   );
   const announcements = useLiveList<Announcement>(
     "home-ann",
@@ -109,25 +110,7 @@ export default function HomePage() {
         <SetupNotice problem={problem} className="mx-auto mt-6 max-w-7xl px-4 sm:px-6" />
       ) : null}
 
-      {/* CATEGORIES */}
-      <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6" aria-labelledby="cats-title">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <p className="eyebrow">Explore</p>
-            <h2 id="cats-title" className="section-title mt-2">Browse by category</h2>
-          </div>
-          <Link href="/directory" className="hidden items-center gap-1 text-sm font-bold sm:inline-flex">View all <ArrowRight size={16} aria-hidden /></Link>
-        </div>
-        <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {activeCategories.map((c) => (
-            <Link key={c.id} href={`/directory?category=${encodeURIComponent(c.id)}`} className="card card-hover p-5">
-              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-sage font-extrabold text-forest">{c.name.slice(0, 1)}</span>
-              <p className="mt-3 font-extrabold leading-tight">{c.name}</p>
-              <p className="mt-1 line-clamp-2 text-sm text-muted">{c.description}</p>
-            </Link>
-          ))}
-        </div>
-      </section>
+      <BusinessMapExplorer businesses={businesses.data} loading={businesses.loading} />
 
       {/* FEATURED BUSINESSES */}
       <section className="border-y border-line bg-sage/60" aria-labelledby="featured-title">
@@ -205,19 +188,6 @@ export default function HomePage() {
             )}
           </div>
           <Link href="/announcements" className="btn-outline mt-5"><Megaphone size={16} aria-hidden /> All announcements</Link>
-        </div>
-      </section>
-
-      {/* NEIGHBOURHOODS */}
-      <section className="mx-auto max-w-7xl px-4 pb-14 sm:px-6" aria-labelledby="hoods-title">
-        <p className="eyebrow">Find near you</p>
-        <h2 id="hoods-title" className="section-title mt-2">Neighbourhoods in Ibadan</h2>
-        <div className="mt-6 flex flex-wrap gap-2">
-          {activeNeighbourhoods.map((h) => (
-            <Link key={h.id} href={`/directory?neighbourhood=${encodeURIComponent(h.id)}`} className="badge badge-sage !px-4 !py-2 !text-sm transition hover:!bg-forest hover:!text-cream">
-              <MapPin size={13} aria-hidden />{h.name}
-            </Link>
-          ))}
         </div>
       </section>
 

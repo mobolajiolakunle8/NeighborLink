@@ -9,6 +9,7 @@ export type HelpStatus = "open" | "fulfilled" | "closed";
 export type ReportStatus = "open" | "resolved" | "dismissed";
 export type ReportTargetType = "business" | "help" | "review" | "user";
 export type MessageStatus = "new" | "read" | "replied";
+export type VerificationStatus = "none" | "requested" | "verified" | "rejected";
 
 /** users/{uid} — private to the owner and administrators. */
 export interface UserProfile {
@@ -22,6 +23,7 @@ export interface UserProfile {
   avatarUrl: string | null;
   bio: string | null;
   isSuspended: boolean;
+  suspendedReason?: string | null;
   fcmTokens?: string[];
   createdAt?: unknown;
 }
@@ -70,9 +72,16 @@ export interface Business {
   phone: string | null;
   email: string | null;
   address: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationUpdatedAt?: unknown;
   website: string | null;
   openingHours: string | null;
   imageUrl: string | null;
+  whatsappEnabled?: boolean;
+  verificationStatus?: VerificationStatus;
+  cacNumber?: string | null;
+  verificationNote?: string | null;
   status: BusinessStatus;
   isFeatured: boolean;
   views: number;
@@ -82,9 +91,32 @@ export interface Business {
 
 export interface Review { id: string; businessId: string; userId: string; authorName: string; rating: number; comment: string; createdAt?: unknown; }
 export interface HelpPost { id: string; userId: string; authorName: string; type: HelpType; title: string; description: string; category: string; neighbourhoodId: string | null; status: HelpStatus; contactPhone: string | null; createdAt?: unknown; updatedAt?: unknown; }
-export interface Announcement { id: string; title: string; body: string; imageUrl: string | null; isPublished: boolean; isPinned: boolean; publishedAt?: unknown; }
+export interface Announcement { id: string; title: string; body: string; imageUrl: string | null; isPublished: boolean; isPinned: boolean; neighbourhoodId?: string | null; publishedAt?: unknown; }
 export interface Report { id: string; reporterId: string; targetType: ReportTargetType; targetId: string; reason: string; details: string | null; status: ReportStatus; createdAt?: unknown; }
 export interface ActivityLog { id: string; userId: string | null; action: string; details: string; createdAt?: unknown; }
 export interface ContactMessage { id: string; name: string; email: string; phone: string | null; subject: string; message: string; status: MessageStatus; createdAt?: unknown; }
 /** legalPages/{"privacy" | "terms"} */
 export interface LegalPage { id: string; title: string; content: string; updatedAt?: unknown; }
+
+export type NotificationType = "review" | "message" | "listing" | "verification" | "account";
+export interface AppNotification { id: string; type: NotificationType; title: string; body: string; link: string; actorId: string; read: boolean; createdAt?: unknown; }
+export interface SavedBusiness { id: string; businessId: string; savedAt?: unknown; }
+export interface Conversation {
+  id: string;
+  kind: "admin";
+  targetType: "support" | "business" | "help";
+  targetId: string | null;
+  targetTitle: string;
+  userId: string;
+  userName: string;
+  /** Contains the member only; active admins are authorized by role. */
+  members: string[];
+  lastMessage: string;
+  lastSenderId: string;
+  lastMessageAt?: unknown;
+  readAt: Record<string, unknown>;
+  closedBy: string | null;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+export interface ChatMessage { id: string; senderId: string; text: string; createdAt?: unknown; }

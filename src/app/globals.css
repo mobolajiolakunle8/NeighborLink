@@ -286,3 +286,11 @@ table.data td {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Leaflet stays below the sticky header; popups match the site typography. */
+.leaflet-container { z-index: 0; font-family: inherit; }
+.nl-map-pin { background: transparent; border: 0; }
+.nl-map-popup { min-width: 160px; color: #172D2A; }
+.nl-map-popup strong { display: block; font-size: 14px; }
+.nl-map-popup p { margin: 6px 0; color: #5B6B60; font-size: 12px; }
+.nl-map-popup a { color: #172D2A; font-weight: 800; text-decoration: underline; }

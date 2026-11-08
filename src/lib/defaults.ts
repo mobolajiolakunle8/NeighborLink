@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   navLinks: [
     { label: "Home", href: "/", enabled: true },
     { label: "Directory", href: "/directory", enabled: true },
+    { label: "Neighbourhoods", href: "/neighbourhoods", enabled: true },
     { label: "Community help", href: "/help", enabled: true },
     { label: "Announcements", href: "/announcements", enabled: true },
     { label: "Contact", href: "/contact", enabled: true },

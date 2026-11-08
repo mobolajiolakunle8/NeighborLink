@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { collection, limit, orderBy, query, where } from "firebase/firestore";
-import { Search, Store } from "lucide-react";
+import { LayoutGrid, Map, Search, Store } from "lucide-react";
+import MapPanel from "@/components/MapPanel";
 import { useSite } from "@/context/SiteContext";
 import { getDb } from "@/lib/firebase";
 import { useLiveList, usePagination } from "@/lib/hooks";
-import { sortByTimestampDesc, toDate } from "@/lib/utils";
+import { hasBusinessLocation, sortByTimestampDesc, toDate } from "@/lib/utils";
 import type { Business } from "@/lib/types";
 import BusinessCard from "@/components/BusinessCard";
 import SetupNotice from "@/components/SetupNotice";
@@ -29,6 +30,7 @@ export default function DirectoryPage() {
   const [category, setCategory] = useState("");
   const [hood, setHood] = useState("");
   const [sort, setSort] = useState<SortKey>("featured");
+  const [view, setView] = useState<"grid" | "map">("grid");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -52,6 +54,8 @@ export default function DirectoryPage() {
     }
   }, [listing.data, term, category, hood, sort, categoryName, neighbourhoodName]);
 
+  const mapped = useMemo(() => filtered.filter(hasBusinessLocation).map(b => ({ id: b.id, lat: b.latitude!, lng: b.longitude!, title: b.name, subtitle: b.address || neighbourhoodName(b.neighbourhoodId), href: `/business/${b.id}` })), [filtered, neighbourhoodName]);
+
   const pager = usePagination(filtered, PAGE_SIZE);
   const { setPage } = pager;
   useEffect(() => setPage(1), [term, category, hood, sort, setPage]);
@@ -71,13 +75,13 @@ export default function DirectoryPage() {
         <label><span className="sr-only">Neighbourhood</span><select value={hood} onChange={e => setHood(e.target.value)} className="input"><option value="">All neighbourhoods</option>{activeNeighbourhoods.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
         <div className="flex gap-2"><button type="submit" className="btn-primary flex-1">Search</button><button type="button" onClick={reset} className="btn-ghost border border-line" disabled={!hasFilters && !draft && sort === "featured"}>Reset</button></div>
       </form>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-bold text-muted" aria-live="polite">{listing.loading ? "Loading listings…" : `${filtered.length} listing${filtered.length === 1 ? "" : "s"} found`}</p><label className="flex items-center gap-2 text-sm font-bold text-muted">Sort by<select value={sort} onChange={e => setSort(e.target.value as SortKey)} className="input !w-auto !py-2 text-sm"><option value="featured">Featured first</option><option value="newest">Newest</option><option value="popular">Most viewed</option><option value="az">A → Z</option></select></label></div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" className={`tab-btn flex items-center gap-1.5 !py-2 !text-xs ${view === "grid" ? "active" : ""}`} onClick={() => setView("grid")}><LayoutGrid size={14} />List</button><button type="button" className={`tab-btn flex items-center gap-1.5 !py-2 !text-xs ${view === "map" ? "active" : ""}`} onClick={() => setView("map")}><Map size={14} />Map ({mapped.length})</button></div><p className="text-sm font-bold text-muted" aria-live="polite">{listing.loading ? "Loading listings…" : `${filtered.length} listing${filtered.length === 1 ? "" : "s"} found`}</p><label className="flex items-center gap-2 text-sm font-bold text-muted">Sort by<select value={sort} onChange={e => setSort(e.target.value as SortKey)} className="input !w-auto !py-2 text-sm"><option value="featured">Featured first</option><option value="newest">Newest</option><option value="popular">Most viewed</option><option value="az">A → Z</option></select></label></div>
       <div className="mt-5">
         {listing.problem ? <SetupNotice problem={listing.problem} /> : listing.loading ? <CardSkeleton count={6} /> : pager.total === 0 ? (
           <EmptyState icon={Store} title="No businesses match your search" text={hasFilters ? "Try a different keyword, category or neighbourhood." : "No approved listings yet. Check back soon."} action={hasFilters ? <button type="button" onClick={reset} className="btn-primary">Clear filters</button> : undefined} />
-        ) : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{pager.pageItems.map(b => <BusinessCard key={b.id} business={b} categoryName={categoryName(b.categoryId)} neighbourhoodName={neighbourhoodName(b.neighbourhoodId)} />)}</div>}
+        ) : view === "map" ? <div className="space-y-3"><MapPanel points={mapped} height={520} /><p className="text-xs text-muted">{mapped.length} of {filtered.length} matching businesses have a saved location. Owners can add a pin from their listing form.</p></div> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{pager.pageItems.map(b => <BusinessCard key={b.id} business={b} categoryName={categoryName(b.categoryId)} neighbourhoodName={neighbourhoodName(b.neighbourhoodId)} />)}</div>}
       </div>
-      <Pagination page={pager.page} pages={pager.pages} onChange={setPage} />
+      {view === "grid" && <Pagination page={pager.page} pages={pager.pages} onChange={setPage} />}
       <p className="mt-8 text-center text-sm text-muted">Own a business? <a href="/register" className="font-bold underline">Create a free account</a> to list it.</p>
     </div>
   );

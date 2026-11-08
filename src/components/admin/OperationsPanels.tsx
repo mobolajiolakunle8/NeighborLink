@@ -9,14 +9,15 @@ import { useSite } from "@/context/SiteContext";
 import { getDb } from "@/lib/firebase";
 import { useLiveList, useNotice, usePagination } from "@/lib/hooks";
 import {
-  adminDeleteUserProfile, adminUpdateUser, deleteBusiness, deleteHelpPost, deleteMessage, setBusinessFeatured,
+  adminDeleteUserProfile, adminUpdateBusinessLocation, adminUpdateUser, bulkSetBusinessStatus, deleteBusiness, setVerification, deleteHelpPost, deleteMessage, setBusinessFeatured,
   setBusinessStatus, setHelpStatus, setMessageStatus, setReportStatus,
 } from "@/lib/api";
 import type {
   ActivityLog, Business, BusinessStatus, ContactMessage, HelpPost, Report, Role, UserProfile,
 } from "@/lib/types";
-import { formatDate, formatDateTime, friendlyError } from "@/lib/utils";
-import { Alert, CardSkeleton, EmptyState, Pagination, StatusBadge } from "@/components/ui";
+import { formatDate, formatDateTime, friendlyError, spamSignals } from "@/lib/utils";
+import { Alert, CardSkeleton, EmptyState, Field, Pagination, Spinner, StatusBadge } from "@/components/ui";
+import BusinessLocationFields, { validCoordinatePair } from "@/components/BusinessLocationFields";
 
 const PAGE = 10;
 
@@ -58,6 +59,24 @@ function ListShell<T>({
 
 // ------------------------------------------------------------------ business moderation
 
+function AdminLocationEditor({ business, onClose }: { business: Business; onClose: () => void }) {
+  const { firebaseUser } = useAuth();
+  const [latitude, setLatitude] = useState(business.latitude != null ? String(business.latitude) : "");
+  const [longitude, setLongitude] = useState(business.longitude != null ? String(business.longitude) : "");
+  const [busy, setBusy] = useState(false);
+  const { notice, show } = useNotice();
+  return <div className="mb-5 rounded-2xl border border-line bg-sage/30 p-5">
+    <div className="mb-3 flex items-center justify-between gap-3"><h3 className="font-extrabold">Map location: {business.name}</h3><button type="button" className="btn-ghost !text-xs" onClick={onClose}>Cancel</button></div>
+    <BusinessLocationFields latitude={latitude} longitude={longitude} onChange={(lat, lng) => { setLatitude(lat); setLongitude(lng); }} />
+    {notice && <div className="mt-3"><Alert kind={notice.kind}>{notice.text}</Alert></div>}
+    <button type="button" disabled={busy || !validCoordinatePair(latitude, longitude)} className="btn-primary mt-4 !py-2 !text-sm" onClick={async () => {
+      setBusy(true);
+      try { await adminUpdateBusinessLocation(business.id, latitude.trim() ? Number(latitude) : null, longitude.trim() ? Number(longitude) : null, firebaseUser?.uid ?? ""); show("success", "Location saved. The public map updates immediately for approved listings."); }
+      catch (err) { show("error", friendlyError(err)); } finally { setBusy(false); }
+    }}>{busy && <Spinner />}Save location</button>
+  </div>;
+}
+
 export function BusinessesPanel() {
   const { firebaseUser } = useAuth();
   const { categoryName, neighbourhoodName } = useSite();
@@ -65,19 +84,31 @@ export function BusinessesPanel() {
   const items = useLiveList<Business>("admin-businesses", () =>
     query(collection(getDb(), "businesses"), orderBy("createdAt", "desc"), limit(500)),
   );
-  const [filter, setFilter] = useState<"pending" | "approved" | "rejected" | "all">("pending");
-  const rows = useMemo(() => (filter === "all" ? items.data : items.data.filter((b) => b.status === filter)), [items.data, filter]);
+  const [filter, setFilter] = useState<"pending" | "verification" | "approved" | "rejected" | "all">("pending");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [locationEdit, setLocationEdit] = useState<Business | null>(null);
+  const rows = useMemo(() => {
+    if (filter === "all") return items.data;
+    if (filter === "verification") return items.data.filter((b) => b.verificationStatus === "requested");
+    return items.data.filter((b) => b.status === filter);
+  }, [items.data, filter]);
   const pager = usePagination(rows, PAGE);
   const uid = firebaseUser?.uid ?? "";
+  const pageIds = pager.pageItems.map((b) => b.id);
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
 
   async function act(fn: () => Promise<void>, ok: string) {
-    try {
-      await fn();
-      show("success", ok);
-    } catch (err) {
-      show("error", friendlyError(err));
-    }
+    try { await fn(); show("success", ok); } catch (err) { show("error", friendlyError(err)); }
   }
+  async function bulk(status: BusinessStatus) {
+    const ids = [...selected];
+    if (!ids.length || !confirm(`${status === "approved" ? "Approve" : "Reject"} ${ids.length} listing(s)?`)) return;
+    setBulkBusy(true);
+    try { const n = await bulkSetBusinessStatus(ids, status, uid); setSelected(new Set()); show("success", `${n} listing(s) ${status}.`); }
+    catch (err) { show("error", friendlyError(err)); } finally { setBulkBusy(false); }
+  }
+  const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   return (
     <ListShell
@@ -85,29 +116,44 @@ export function BusinessesPanel() {
       loading={items.loading}
       error={items.error}
       items={rows}
-      emptyTitle={filter === "pending" ? "Nothing waiting for approval" : "No listings in this view"}
+      emptyTitle={filter === "pending" ? "Nothing waiting for approval" : filter === "verification" ? "No verification requests" : "No listings in this view"}
       emptyText="New submissions appear here in real time."
       notice={notice && <Alert kind={notice.kind}>{notice.text}</Alert>}
       pager={pager}
       filters={
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by status">
-          {(["pending", "approved", "rejected", "all"] as const).map((f) => (
-            <button key={f} type="button" aria-pressed={filter === f} className={`tab-btn ${filter === f ? "active" : ""}`} onClick={() => setFilter(f)}>
-              {f[0].toUpperCase() + f.slice(1)}
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter">
+          {(["pending", "verification", "approved", "rejected", "all"] as const).map((f) => (
+            <button key={f} type="button" aria-pressed={filter === f} className={`tab-btn ${filter === f ? "active" : ""}`} onClick={() => { setFilter(f); setSelected(new Set()); }}>
+              {f === "verification" ? `Verification (${items.data.filter((b) => b.verificationStatus === "requested").length})` : f[0].toUpperCase() + f.slice(1)}
             </button>
           ))}
         </div>
       }
     >
+      {locationEdit && <AdminLocationEditor key={locationEdit.id} business={locationEdit} onClose={() => setLocationEdit(null)} />}
+      {selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl bg-sage p-3 text-sm">
+          <span className="font-bold">{selected.size} selected</span>
+          <button type="button" disabled={bulkBusy} className="btn-primary !px-3 !py-1.5 text-xs" onClick={() => bulk("approved")}><Check size={13} /> Approve selected</button>
+          <button type="button" disabled={bulkBusy} className="btn-ghost border border-danger-line !px-3 !py-1.5 text-xs text-danger" onClick={() => bulk("rejected")}><X size={13} /> Reject selected</button>
+          <button type="button" className="btn-ghost !px-3 !py-1.5 text-xs" onClick={() => setSelected(new Set())}>Clear</button>
+        </div>
+      )}
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>Business</th><th>Category / area</th><th>Owner</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+          <thead><tr>
+            <th><input type="checkbox" aria-label="Select all on page" checked={allOnPage} onChange={() => setSelected((s) => { const n = new Set(s); if (allOnPage) pageIds.forEach((id) => n.delete(id)); else pageIds.forEach((id) => n.add(id)); return n; })} /></th>
+            <th>Business</th><th>Category / area</th><th>Owner</th><th>Status</th><th><span className="sr-only">Actions</span></th>
+          </tr></thead>
           <tbody>
             {pager.pageItems.map((b) => (
               <tr key={b.id}>
+                <td><input type="checkbox" aria-label={`Select ${b.name}`} checked={selected.has(b.id)} onChange={() => toggle(b.id)} /></td>
                 <td>
                   <Link href={`/business/${b.id}`} className="font-bold hover:underline">{b.name}</Link>
                   {b.isFeatured && <span className="badge badge-gold ml-2">Featured</span>}
+                  {b.verificationStatus === "verified" && <span className="badge badge-forest ml-2">Verified</span>}
+                  {b.verificationStatus === "requested" && <p className="mt-1 text-xs font-bold text-bronze">CAC: {b.cacNumber}{b.verificationNote ? ` — ${b.verificationNote}` : ""}</p>}
                   <p className="mt-0.5 max-w-xs truncate text-xs text-muted">{b.description}</p>
                 </td>
                 <td className="text-muted">{categoryName(b.categoryId) || "—"} / {neighbourhoodName(b.neighbourhoodId) || "Ibadan"}</td>
@@ -115,18 +161,16 @@ export function BusinessesPanel() {
                 <td><StatusBadge status={b.status} /></td>
                 <td>
                   <div className="flex flex-wrap justify-end gap-1.5">
-                    {b.status !== "approved" && (
-                      <button type="button" className="btn-ghost border border-[#CFE0D2] !px-3 !py-1.5 text-xs" onClick={() => act(() => setBusinessStatus(b.id, "approved", uid), "Listing approved and published.")}><Check size={13} aria-hidden /> Approve</button>
-                    )}
-                    {b.status !== "rejected" && (
-                      <button type="button" className="btn-ghost border border-danger-line !px-3 !py-1.5 text-xs text-danger" onClick={() => act(() => setBusinessStatus(b.id, "rejected", uid), "Listing rejected.")}><X size={13} aria-hidden /> Reject</button>
-                    )}
-                    <button type="button" className="btn-ghost border border-line !px-3 !py-1.5 text-xs" onClick={() => act(() => setBusinessFeatured(b.id, !b.isFeatured, uid), b.isFeatured ? "Removed from featured." : "Featured on homepage.")}>
-                      <Star size={13} aria-hidden /> {b.isFeatured ? "Unfeature" : "Feature"}
-                    </button>
-                    <button type="button" aria-label={`Delete ${b.name}`} className="btn-ghost border border-danger-line !px-3 !py-1.5 text-xs text-danger" onClick={() => {
-                      if (confirm(`Permanently delete "${b.name}"?`)) act(() => deleteBusiness(b.id, uid), "Listing deleted.");
-                    }}><Trash2 size={13} aria-hidden /></button>
+                    {b.verificationStatus === "requested" && (<>
+                      <a href="https://search.cac.gov.ng/" target="_blank" rel="noopener noreferrer" className="btn-ghost border border-line !px-3 !py-1.5 text-xs">Check CAC</a>
+                      <button type="button" className="btn-ghost border border-[#CFE0D2] !px-3 !py-1.5 text-xs" onClick={() => act(() => setVerification(b.id, "verified", uid), "Business verified.")}><ShieldCheck size={13} /> Verify</button>
+                      <button type="button" className="btn-ghost border border-danger-line !px-3 !py-1.5 text-xs text-danger" onClick={() => act(() => setVerification(b.id, "rejected", uid), "Verification declined.")}>Decline</button>
+                    </>)}
+                    {b.status !== "approved" && <button type="button" className="btn-ghost border border-[#CFE0D2] !px-3 !py-1.5 text-xs" onClick={() => act(() => setBusinessStatus(b.id, "approved", uid), "Listing approved and published.")}><Check size={13} aria-hidden /> Approve</button>}
+                    {b.status !== "rejected" && <button type="button" className="btn-ghost border border-danger-line !px-3 !py-1.5 text-xs text-danger" onClick={() => act(() => setBusinessStatus(b.id, "rejected", uid), "Listing rejected.")}><X size={13} aria-hidden /> Reject</button>}
+                    <button type="button" className="btn-ghost border border-line !px-3 !py-1.5 text-xs" onClick={() => act(() => setBusinessFeatured(b.id, !b.isFeatured, uid), b.isFeatured ? "Removed from featured." : "Featured on homepage.")}><Star size={13} aria-hidden /> {b.isFeatured ? "Unfeature" : "Feature"}</button>
+                    <button type="button" className="btn-ghost border border-line !px-3 !py-1.5 text-xs" onClick={() => setLocationEdit(b)}>Location</button>
+                    <button type="button" aria-label={`Delete ${b.name}`} className="btn-ghost border border-danger-line !px-3 !py-1.5 text-xs text-danger" onClick={() => { if (confirm(`Permanently delete "${b.name}"?`)) act(() => deleteBusiness(b.id, uid), "Listing deleted."); }}><Trash2 size={13} aria-hidden /></button>
                   </div>
                 </td>
               </tr>
@@ -195,10 +239,15 @@ export function UsersPanel() {
                     </select>
                   </td>
                   <td className="text-muted">{formatDate(u.createdAt)}</td>
-                  <td><span className={`badge ${u.isSuspended ? "badge-red" : "badge-sage"}`}>{u.isSuspended ? "Suspended" : "Active"}</span></td>
+                  <td><span className={`badge ${u.isSuspended ? "badge-red" : "badge-sage"}`}>{u.isSuspended ? "Suspended" : "Active"}</span>{u.isSuspended && u.suspendedReason && <p className="mt-1 max-w-[12rem] text-xs text-muted">{u.suspendedReason}</p>}</td>
                   <td>
                     <div className="flex flex-wrap justify-end gap-1.5">
-                      <button type="button" disabled={self} className="btn-ghost border border-line !px-3 !py-1.5 text-xs" onClick={() => act(() => adminUpdateUser(u.uid, { isSuspended: !u.isSuspended }, uid), u.isSuspended ? "Account restored." : "Account suspended.")}>
+                      <button type="button" disabled={self} className="btn-ghost border border-line !px-3 !py-1.5 text-xs" onClick={() => {
+                        if (u.isSuspended) { act(() => adminUpdateUser(u.uid, { isSuspended: false, suspendedReason: null }, uid), "Account restored."); return; }
+                        const reason = prompt(`Reason for suspending ${u.name}? (shown to the user)`, "Breach of community guidelines");
+                        if (reason === null) return;
+                        act(() => adminUpdateUser(u.uid, { isSuspended: true, suspendedReason: reason.trim().slice(0, 200) || "Breach of community guidelines" }, uid), "Account suspended.");
+                      }}>
                         {u.isSuspended ? <><RotateCcw size={13} aria-hidden /> Restore</> : <><Ban size={13} aria-hidden /> Suspend</>}
                       </button>
                       <button type="button" disabled={self} aria-label={`Remove profile of ${u.name}`} className="btn-ghost border border-danger-line !px-3 !py-1.5 text-xs text-danger" onClick={() => {
@@ -223,18 +272,20 @@ export function HelpPanel() {
   const { neighbourhoodName } = useSite();
   const { notice, show } = useNotice();
   const items = useLiveList<HelpPost>("admin-help", () => query(collection(getDb(), "helpPosts"), orderBy("createdAt", "desc"), limit(500)));
-  const pager = usePagination(items.data, PAGE);
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const helpRows = useMemo(() => flaggedOnly ? items.data.filter((p) => spamSignals(`${p.title} ${p.description}`).length > 0) : items.data, [items.data, flaggedOnly]);
+  const pager = usePagination(helpRows, PAGE);
   const uid = firebaseUser?.uid ?? "";
 
   return (
-    <ListShell title="Help board" loading={items.loading} error={items.error} items={items.data} emptyTitle="No help posts yet" emptyText="Requests and offers from neighbours appear here." notice={notice && <Alert kind={notice.kind}>{notice.text}</Alert>} pager={pager}>
+    <ListShell title="Help board" loading={items.loading} error={items.error} items={helpRows} filters={<label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={flaggedOnly} onChange={(e) => setFlaggedOnly(e.target.checked)} /> Possible scams only</label>} emptyTitle="No help posts yet" emptyText="Requests and offers from neighbours appear here." notice={notice && <Alert kind={notice.kind}>{notice.text}</Alert>} pager={pager}>
       <div className="table-wrap">
         <table className="data">
           <thead><tr><th>Post</th><th>Type</th><th>Area</th><th>Author</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>
             {pager.pageItems.map((p) => (
               <tr key={p.id}>
-                <td><p className="font-bold">{p.title}</p><p className="max-w-xs truncate text-xs text-muted">{p.description}</p></td>
+                <td><p className="font-bold">{p.title}</p><p className="max-w-xs truncate text-xs text-muted">{p.description}</p>{spamSignals(`${p.title} ${p.description}`).length > 0 && <p className="mt-1 text-xs font-bold text-danger">⚠ Possible scam: {spamSignals(`${p.title} ${p.description}`).join(", ")}</p>}</td>
                 <td><span className={`badge ${p.type === "request" ? "badge-gold" : "badge-sage"}`}>{p.type}</span></td>
                 <td className="text-muted">{neighbourhoodName(p.neighbourhoodId) || "Ibadan"}</td>
                 <td>{p.authorName}</td>
@@ -361,10 +412,21 @@ export function MessagesPanel() {
 // ------------------------------------------------------------------ activity logs
 
 export function LogsPanel() {
-  const items = useLiveList<ActivityLog>("admin-logs", () => query(collection(getDb(), "activityLogs"), orderBy("createdAt", "desc"), limit(300)));
-  const pager = usePagination(items.data, PAGE);
+  const items = useLiveList<ActivityLog>("admin-logs", () => query(collection(getDb(), "activityLogs"), orderBy("createdAt", "desc"), limit(500)));
+  const [action, setAction] = useState("");
+  const [search, setSearch] = useState("");
+  const actions = useMemo(() => [...new Set(items.data.map((l) => l.action))].sort(), [items.data]);
+  const rows = useMemo(() => {
+    const t = search.trim().toLowerCase();
+    return items.data.filter((l) => (!action || l.action === action) && (!t || `${l.details} ${l.userId ?? ""}`.toLowerCase().includes(t)));
+  }, [items.data, action, search]);
+  const pager = usePagination(rows, PAGE);
   return (
-    <ListShell title="Activity logs" loading={items.loading} error={items.error} items={items.data} emptyTitle="No activity yet" emptyText="Sign-ins, submissions and admin actions are recorded here." pager={pager}>
+    <ListShell title="Activity logs" loading={items.loading} error={items.error} items={rows} emptyTitle="No matching activity" emptyText="Sign-ins, submissions and admin actions are recorded here." pager={pager}
+      filters={<div className="flex flex-wrap gap-2">
+        <select className="input !w-auto !py-2 text-sm" value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter by action"><option value="">All actions</option>{actions.map((a) => <option key={a} value={a}>{a.replace(/_/g, " ")}</option>)}</select>
+        <input className="input !w-56 !py-2 text-sm" placeholder="Search details or user ID…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search logs" />
+      </div>}>
       <div className="table-wrap">
         <table className="data">
           <thead><tr><th>Action</th><th>Details</th><th>User ID</th><th>When</th></tr></thead>

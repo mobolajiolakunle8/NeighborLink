@@ -3,13 +3,20 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { LogOut, Menu, Phone, PlusCircle, ShieldCheck, User, X } from "lucide-react";
+import { Bell, Bookmark, LogOut, Menu, MessageCircle, Phone, PlusCircle, ShieldCheck, User, X } from "lucide-react";
+import { useMember } from "@/context/MemberContext";
 import { useAuth } from "@/context/AuthContext";
 import { useSite } from "@/context/SiteContext";
 
 export default function Header() {
   const { settings } = useSite();
   const { firebaseUser, profile, isAdmin, logout } = useAuth();
+  const { unreadNotifications, unreadConversations } = useMember();
+  const memberLinks = [
+    { href: "/saved", label: "Saved", icon: Bookmark, count: 0 },
+    { href: "/inbox", label: "Inbox", icon: MessageCircle, count: unreadConversations },
+    { href: "/notifications", label: "Updates", icon: Bell, count: unreadNotifications },
+  ];
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const navLinks = settings.navLinks.filter(l => l.enabled);
@@ -50,6 +57,12 @@ export default function Header() {
             <a href={phoneHref} className="flex items-center gap-1.5 text-sm font-bold text-gold transition hover:text-white"><Phone size={15} aria-hidden />{settings.contactPhone}</a>
             {firebaseUser ? (
               <>
+                {memberLinks.map(m => (
+                  <Link key={m.href} href={m.href} title={m.label} aria-label={`${m.label}${m.count ? ` (${m.count} unread)` : ""}`} className="relative rounded-full p-2 text-sage transition hover:bg-white/10 hover:text-white">
+                    <m.icon size={18} aria-hidden />
+                    {m.count > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-gold px-1 text-[10px] font-extrabold text-forest">{m.count > 9 ? "9+" : m.count}</span>}
+                  </Link>
+                ))}
                 <Link href="/profile" className="btn-ghost !text-cream hover:!bg-white/10"><User size={16} aria-hidden />{displayName.split(" ")[0] || "Profile"}</Link>
                 {isAdmin && <Link href="/dashboard" className="btn-gold !px-4 !py-2 text-sm"><ShieldCheck size={16} aria-hidden />Admin</Link>}
                 <button type="button" onClick={handleLogout} className="btn-ghost !text-cream hover:!bg-white/10"><LogOut size={16} aria-hidden />Logout</button>
@@ -69,6 +82,7 @@ export default function Header() {
             <div className="flex flex-wrap gap-2 pt-3">
               {firebaseUser ? (
                 <>
+                  {memberLinks.map(m => <Link key={m.href} href={m.href} className="btn-outline !border-cream !py-2 !text-sm !text-cream"><m.icon size={15} aria-hidden />{m.label}{m.count > 0 ? ` (${m.count})` : ""}</Link>)}
                   <Link href="/profile" className="btn-outline !border-cream !py-2 !text-sm !text-cream">My profile</Link>
                   {isAdmin && <Link href="/dashboard" className="btn-gold !py-2 text-sm">Admin dashboard</Link>}
                   <button type="button" onClick={handleLogout} className="btn-outline !border-cream !py-2 !text-sm !text-cream">Logout</button>

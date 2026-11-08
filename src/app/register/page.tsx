@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { HeartHandshake, Store, UserPlus, KeyRound } from "lucide-react";
-import { registerUser, ADMIN_SETUP_KEY, type RegisterInput } from "@/lib/api";
+import { registerUser, type RegisterInput } from "@/lib/api";
 import { useSite } from "@/context/SiteContext";
 import { friendlyError, isEmail, isPhone } from "@/lib/utils";
 import { Alert, Field, Spinner } from "@/components/ui";
@@ -88,13 +88,13 @@ export default function RegisterPage() {
             <p className="flex items-center gap-1.5 text-xs font-bold text-forest">
               <KeyRound size={14} /> Administrator Registration (Requires Setup Key)
             </p>
-            <Field label="Admin Setup Key" hint="Default key: NEIGHBOURLINK_ADMIN_2026">
+            <Field label="Admin Setup Key" hint="One-time key provided privately to the site owner.">
               <input
                 type="text"
                 className="input font-mono text-sm !py-1.5"
                 value={form.adminSetupKey || ""}
                 onChange={(e) => set("adminSetupKey", e.target.value)}
-                placeholder="NEIGHBOURLINK_ADMIN_2026"
+                placeholder="NL-…" autoComplete="off" spellCheck={false}
                 required
               />
             </Field>

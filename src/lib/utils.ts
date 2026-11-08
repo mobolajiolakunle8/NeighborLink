@@ -117,3 +117,32 @@ export function friendlyError(err: unknown): string {
   if (err instanceof Error && err.message && !code.startsWith("auth/") && !code.startsWith("storage/")) return err.message;
   return "Something went wrong. Please try again.";
 }
+
+/** Google Maps directions link (no API key needed). */
+export function directionsUrl(name: string, address: string | null | undefined, area: string): string {
+  const q = [name, address, area, "Ibadan", "Nigeria"].filter(Boolean).join(", ");
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}`;
+}
+/** Converts a Nigerian phone number to WhatsApp's international format, or null if invalid. */
+export function whatsappNumber(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  let n = phone.replace(/[^0-9]/g, "");
+  if (n.startsWith("0") && n.length === 11) n = `234${n.slice(1)}`;
+  return /^234[789][01][0-9]{8}$/.test(n) ? n : null;
+}
+/** Simple spam/scam signal check for moderation. Returns the matched phrases. */
+export const SPAM_PHRASES = [
+  "send money", "transfer", "bank details", "account number", "bvn", "otp", "pin", "bitcoin", "crypto",
+  "investment", "double your", "loan", "western union", "gift card", "click this link", "whatsapp me", "urgent payment",
+];
+export function spamSignals(text: string): string[] {
+  const t = text.toLowerCase();
+  return SPAM_PHRASES.filter((p) => new RegExp(`\\b${p.replace(/\s+/g, "\\s+")}\\b`).test(t));
+}
+
+export function hasBusinessLocation(b: { latitude?: number | null; longitude?: number | null }): boolean {
+  return typeof b.latitude === "number" && typeof b.longitude === "number" && Number.isFinite(b.latitude) && Number.isFinite(b.longitude) && Math.abs(b.latitude) <= 90 && Math.abs(b.longitude) <= 180;
+}
+export function coordinatesDirectionsUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${lat},${lng}`)}`;
+}

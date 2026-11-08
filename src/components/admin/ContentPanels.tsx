@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { collection, limit, orderBy, query } from "firebase/firestore";
 import { Eye, EyeOff, Pencil, Pin, Plus, Save, Trash2, X } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useSite } from "@/context/SiteContext";
 import { getDb } from "@/lib/firebase";
 import { DEFAULT_LEGAL } from "@/lib/defaults";
 import { useLiveDoc, useLiveList, useNotice, usePagination } from "@/lib/hooks";
@@ -113,7 +114,7 @@ export function TaxonomyPanel({ kind }: { kind: Kind }) {
 
 // ------------------------------------------------------------------ announcements
 
-const EMPTY_ANN: AnnouncementInput = { title: "", body: "", imageUrl: "", isPinned: false, isPublished: true };
+const EMPTY_ANN: AnnouncementInput = { title: "", body: "", imageUrl: "", isPinned: false, isPublished: true, neighbourhoodId: "" };
 
 export function AnnouncementsPanel() {
   const { firebaseUser } = useAuth();
@@ -124,12 +125,13 @@ export function AnnouncementsPanel() {
   const pager = usePagination(items.data, 8);
   const [editing, setEditing] = useState<Announcement | null>(null);
   const [form, setForm] = useState<AnnouncementInput>(EMPTY_ANN);
+  const { activeNeighbourhoods, neighbourhoodName } = useSite();
   const [busy, setBusy] = useState(false);
   const uid = firebaseUser?.uid ?? "";
 
   function startEdit(a: Announcement) {
     setEditing(a);
-    setForm({ title: a.title, body: a.body, imageUrl: a.imageUrl ?? "", isPinned: a.isPinned, isPublished: a.isPublished });
+    setForm({ title: a.title, body: a.body, imageUrl: a.imageUrl ?? "", isPinned: a.isPinned, isPublished: a.isPublished, neighbourhoodId: a.neighbourhoodId ?? "" });
   }
   function reset() {
     setEditing(null);
@@ -160,6 +162,7 @@ export function AnnouncementsPanel() {
         <h2 className="text-lg font-extrabold">{editing ? "Edit announcement" : "Publish announcement"}</h2>
         <Field label="Title *"><input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} maxLength={220} /></Field>
         <Field label="Message *"><textarea className="input" rows={5} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} maxLength={5000} /></Field>
+        <Field label="Audience" hint="Choose a neighbourhood to show this on that area's page, or leave as everyone."><select className="input" value={form.neighbourhoodId ?? ""} onChange={(e) => setForm({ ...form, neighbourhoodId: e.target.value })}><option value="">Everyone in Ibadan</option>{activeNeighbourhoods.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select></Field>
         <ImageUploadField label="Image (optional)" value={form.imageUrl} onChange={(url) => setForm({ ...form, imageUrl: url })} folder="announcements" />
         <div className="flex flex-wrap gap-4 text-sm font-bold">
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.isPinned} onChange={(e) => setForm({ ...form, isPinned: e.target.checked })} className="h-4 w-4" /> Pin to top</label>
@@ -183,7 +186,7 @@ export function AnnouncementsPanel() {
                 <li key={a.id} className="rounded-2xl border border-line p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-extrabold">{a.title}</p>
-                    {a.isPinned && <span className="badge badge-gold"><Pin size={11} aria-hidden /> Pinned</span>}
+                    {a.isPinned && <span className="badge badge-gold"><Pin size={11} aria-hidden /> Pinned</span>}{a.neighbourhoodId && <span className="badge badge-sage">{neighbourhoodName(a.neighbourhoodId) || a.neighbourhoodId}</span>}
                     <span className={`badge ${a.isPublished ? "badge-sage" : "badge-red"}`}>{a.isPublished ? "Published" : "Draft"}</span>
                   </div>
                   <p className="mt-1 line-clamp-2 text-sm text-muted">{a.body}</p>

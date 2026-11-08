@@ -1,17 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   BarChart3, FileText, Flag, HeartHandshake, Mail, Megaphone, MapPin, ScrollText,
-  Settings2, ShieldCheck, Store, Tags, Users, KeyRound, CheckCircle2, Copy,
+  Settings2, ShieldCheck, Store, Tags, Users, KeyRound, CheckCircle2, MessageCircle,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Alert, CardSkeleton, EmptyState, Field, Spinner } from "@/components/ui";
-import { claimAdminAccess, ADMIN_SETUP_KEY, FIRESTORE_RULES_SNIPPET } from "@/lib/api";
+import { claimAdminAccess } from "@/lib/api";
 import { friendlyError } from "@/lib/utils";
 import Overview from "@/components/admin/Overview";
 import SettingsPanel from "@/components/admin/SettingsPanel";
+import SupportInboxPanel from "@/components/admin/SupportInboxPanel";
+import AdminMessagesButton from "@/components/admin/AdminMessagesButton";
 import { AnnouncementsPanel, LegalPanel, TaxonomyPanel } from "@/components/admin/ContentPanels";
 import {
   BusinessesPanel, HelpPanel, LogsPanel, MessagesPanel, ReportsPanel, UsersPanel,
@@ -19,7 +21,7 @@ import {
 
 type TabId =
   | "overview" | "settings" | "categories" | "neighbourhoods" | "businesses" | "users"
-  | "announcements" | "help" | "reports" | "messages" | "legal" | "logs";
+  | "announcements" | "help" | "reports" | "messages" | "memberMessages" | "legal" | "logs";
 
 const TABS: { id: TabId; label: string; icon: typeof BarChart3; group: "Insights" | "Content" | "Operations" }[] = [
   { id: "overview", label: "Overview", icon: BarChart3, group: "Insights" },
@@ -33,18 +35,25 @@ const TABS: { id: TabId; label: string; icon: typeof BarChart3; group: "Insights
   { id: "users", label: "Users", icon: Users, group: "Operations" },
   { id: "help", label: "Help board", icon: HeartHandshake, group: "Operations" },
   { id: "reports", label: "Reports", icon: Flag, group: "Operations" },
-  { id: "messages", label: "Messages", icon: Mail, group: "Operations" },
+  { id: "memberMessages", label: "Member messages", icon: MessageCircle, group: "Operations" },
+  { id: "messages", label: "Contact form", icon: Mail, group: "Operations" },
 ];
 
 export default function DashboardPage() {
   const { isAdmin, isSignedIn, loading, profile, firebaseUser } = useAuth();
   const [tab, setTab] = useState<TabId>("overview");
-  const [setupKey, setSetupKey] = useState(ADMIN_SETUP_KEY);
+  const [threadId, setThreadId] = useState<string | undefined>();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("tab");
+    if (requested && TABS.some(t => t.id === requested)) setTab(requested as TabId);
+    const thread = params.get("thread");
+    if (thread && /^support_[A-Za-z0-9_-]+$/.test(thread)) { setThreadId(thread); setTab("memberMessages"); }
+  }, []);
+  const [setupKey, setSetupKey] = useState("");
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimSuccess, setClaimSuccess] = useState<string | null>(null);
-  const [showRules, setShowRules] = useState(false);
-  const [copiedRules, setCopiedRules] = useState(false);
 
   if (loading) {
     return <div className="mx-auto max-w-7xl px-4 py-10"><CardSkeleton count={2} className="h-24" /></div>;
@@ -97,59 +106,22 @@ export default function DashboardPage() {
               </span>
               <div>
                 <h2 className="text-lg font-extrabold leading-tight">Activate Administrator Access</h2>
-                <p className="text-xs text-muted">Enter the authorized Admin Setup Key to upgrade this account to Admin.</p>
+                <p className="text-xs text-muted">First-time setup only. Later administrators are added by an existing admin in Dashboard → Users.</p>
               </div>
             </div>
 
-            <Field label="Admin Setup Key" hint="Default key: NEIGHBOURLINK_ADMIN_2026">
+            <Field label="Admin Setup Key" hint="The one-time key provided privately to the site owner. It can be used only once to create the first administrator.">
               <input
                 type="text"
                 value={setupKey}
                 onChange={(e) => setSetupKey(e.target.value)}
                 required
                 className="input font-mono"
-                placeholder="Enter Admin Setup Key"
+                placeholder="NL-…" autoComplete="off" spellCheck={false}
               />
             </Field>
 
-            {claimError && (
-              <div className="space-y-3">
-                <Alert kind="error">{claimError}</Alert>
-                <div className="rounded-xl border border-line bg-white p-4 space-y-2 text-xs">
-                  <p className="font-bold text-forest">
-                    Need to publish the updated Firestore Security Rules in Firebase Console?
-                  </p>
-                  <p className="text-muted">
-                    Copy the rules below and paste them into <strong>Firebase Console → Firestore Database → Rules</strong>, then click <strong>Publish</strong>.
-                  </p>
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <button
-                      type="button"
-                      className="btn-outline !py-1.5 !px-3 text-xs"
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(FIRESTORE_RULES_SNIPPET);
-                        setCopiedRules(true);
-                        setTimeout(() => setCopiedRules(false), 2500);
-                      }}
-                    >
-                      <Copy size={13} /> {copiedRules ? "Copied to clipboard!" : "Copy Firestore Rules"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost border border-line !py-1.5 !px-3 text-xs"
-                      onClick={() => setShowRules((v) => !v)}
-                    >
-                      {showRules ? "Hide rules" : "View rules"}
-                    </button>
-                  </div>
-                  {showRules && (
-                    <pre className="mt-2 max-h-64 overflow-auto rounded-xl bg-forest p-3 text-[11px] leading-relaxed text-cream">
-                      {FIRESTORE_RULES_SNIPPET}
-                    </pre>
-                  )}
-                </div>
-              </div>
-            )}
+            {claimError && <Alert kind="error">{claimError}</Alert>}
             {claimSuccess && (
               <Alert kind="success">
                 <span className="flex items-center gap-1.5"><CheckCircle2 size={16} />{claimSuccess}</span>
@@ -176,6 +148,7 @@ export default function DashboardPage() {
           <h1 className="section-title mt-2">Manage NeighbourLink</h1>
           <p className="mt-1 text-sm text-muted">Signed in as {profile?.name}. Every change you publish is saved to Firebase and appears live on all connected devices.</p>
         </div>
+        <AdminMessagesButton onClick={() => setTab("memberMessages")} />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[240px_1fr]">
@@ -222,6 +195,7 @@ export default function DashboardPage() {
           {tab === "users" && <UsersPanel />}
           {tab === "help" && <HelpPanel />}
           {tab === "reports" && <ReportsPanel />}
+          {tab === "memberMessages" && <SupportInboxPanel initialThreadId={threadId} />}
           {tab === "messages" && <MessagesPanel />}
           {tab === "logs" && <LogsPanel />}
         </section>

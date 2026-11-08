@@ -1,41 +1,77 @@
 rules_version = '2';
 // NeighbourLink — Cloud Firestore security rules.
+// Deny by default. Roles live in users/{uid}.role. The FIRST administrator is created
+// once via config/bootstrap with a setup key verified against its SHA-256 hash; the
+// plaintext key is never shipped in the website. Further admins are granted by admins.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ---------- helpers ----------
     function signedIn() { return request.auth != null; }
     function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function isAdmin() { return signedIn() && me().role == 'admin'; }
-    function active() { return signedIn() && me().isSuspended != true; }
-    function validAdminKey() {
-      return request.resource.data.get('adminSetupKey', '') == 'NEIGHBOURLINK_ADMIN_2026';
+    function isAdmin() { return signedIn() && me().role == 'admin' && me().get('isSuspended', false) != true; }
+    function active() { return signedIn() && me().get('isSuspended', false) != true; }
+    function bootstrapPath() { return /databases/$(database)/documents/config/bootstrap; }
+    // True only inside the single batch that claims the one-time bootstrap.
+    function claimingBootstrap() {
+      return !exists(bootstrapPath()) && getAfter(bootstrapPath()).data.adminUid == request.auth.uid;
     }
 
-    // ---------- users (private profiles) ----------
+    // ---------- one-time first-admin bootstrap ----------
+    match /config/bootstrap {
+      allow read: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['adminUid', 'setupKey', 'claimedAt'])
+        && request.resource.data.adminUid == request.auth.uid
+        && request.resource.data.setupKey is string
+        && hashing.sha256(request.resource.data.setupKey).toHexString().lower() == '8d11ef54288014ff687921fee39572c42ea2fdbbc570778d4a279dd366bf5714'
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      allow update, delete: if false;
+    }
+
+    // ---------- users ----------
     match /users/{uid} {
       allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
-
       allow create: if signedIn() && request.auth.uid == uid
         && request.resource.data.isSuspended == false
-        && (
-          request.resource.data.role in ['resident', 'business']
-          || (request.resource.data.role == 'admin' && validAdminKey())
-        );
-
+        && !request.resource.data.keys().hasAny(['adminSetupKey', 'suspendedReason'])
+        && (request.resource.data.role in ['resident', 'business']
+            || (request.resource.data.role == 'admin' && claimingBootstrap()));
       allow update: if isAdmin()
-        || (signedIn() && request.auth.uid == uid && validAdminKey() && request.resource.data.isSuspended == false)
-        || (
-          signedIn() && request.auth.uid == uid
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isSuspended','email','uid','createdAt'])
-          && (
-            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
-            || request.resource.data.role in ['resident', 'business']
-          )
-        );
-
+        || (signedIn() && request.auth.uid == uid
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isSuspended', 'suspendedReason', 'email', 'uid', 'createdAt'])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+                || request.resource.data.role in ['resident', 'business']
+                || (request.resource.data.role == 'admin' && claimingBootstrap()))
+            && !request.resource.data.keys().hasAny(['adminSetupKey']));
       allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+
+      // Saved businesses: private to the owner.
+      match /saved/{bizId} {
+        allow read, delete: if signedIn() && request.auth.uid == uid;
+        allow create: if active() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['businessId', 'savedAt'])
+          && request.resource.data.businessId == bizId;
+      }
+
+      // In-app notifications: the owner reads, marks read and deletes.
+      match /notifications/{nid} {
+        allow read, delete: if signedIn() && request.auth.uid == uid;
+        allow update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+          && request.resource.data.read is bool;
+        allow create: if active()
+          && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'link', 'actorId', 'read', 'createdAt'])
+          && request.resource.data.actorId == request.auth.uid
+          && request.resource.data.read == false
+          && request.resource.data.title is string && request.resource.data.title.size() <= 160
+          && request.resource.data.body is string && request.resource.data.body.size() <= 400
+          && request.resource.data.link is string && request.resource.data.link.matches('/.*')
+          && request.auth.uid != uid
+          && (request.resource.data.type == 'review'
+              || (request.resource.data.type == 'message' && (isAdmin() || get(/databases/$(database)/documents/users/$(uid)).data.role == 'admin'))
+              || (isAdmin() && request.resource.data.type in ['listing', 'verification', 'account']));
+      }
     }
 
     // ---------- site configuration ----------
@@ -45,6 +81,18 @@ service cloud.firestore {
     match /legalPages/{docId} { allow read: if true; allow write: if isAdmin(); }
 
     // ---------- business listings ----------
+    function verificationUnchanged() {
+      return request.resource.data.get('verificationStatus', 'none') == resource.data.get('verificationStatus', 'none')
+        && request.resource.data.get('cacNumber', null) == resource.data.get('cacNumber', null);
+    }
+    function validLocation(d) {
+      let hasLat = d.get('latitude', null) != null;
+      let hasLng = d.get('longitude', null) != null;
+      return hasLat == hasLng && (!hasLat || (
+        d.latitude is number && d.longitude is number
+        && d.latitude >= -90 && d.latitude <= 90
+        && d.longitude >= -180 && d.longitude <= 180));
+    }
     match /businesses/{bizId} {
       allow read: if resource.data.status == 'approved' || isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
       allow create: if active()
@@ -52,16 +100,27 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.isFeatured == false
         && request.resource.data.views == 0
+        && request.resource.data.get('verificationStatus', 'none') == 'none'
+        && validLocation(request.resource.data)
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 3 && request.resource.data.name.size() <= 180
         && request.resource.data.description is string
         && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 4000;
       allow update: if isAdmin()
+        // Owner content edit: back to pending review; cannot touch featuring, views or verification.
         || (active() && resource.data.ownerId == request.auth.uid
             && request.resource.data.ownerId == resource.data.ownerId
             && request.resource.data.status == 'pending'
             && request.resource.data.isFeatured == resource.data.isFeatured
-            && request.resource.data.views == resource.data.views)
+            && request.resource.data.views == resource.data.views
+            && verificationUnchanged()
+            && validLocation(request.resource.data))
+        // Owner verification request: only these fields, status must become 'requested'.
+        || (active() && resource.data.ownerId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verificationStatus', 'cacNumber', 'verificationNote', 'verificationRequestedAt', 'updatedAt'])
+            && request.resource.data.verificationStatus == 'requested'
+            && request.resource.data.cacNumber is string && request.resource.data.cacNumber.size() >= 4 && request.resource.data.cacNumber.size() <= 40)
+        // Anyone may add exactly one view to an approved listing.
         || (resource.data.status == 'approved'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views'])
             && request.resource.data.views == resource.data.views + 1);
@@ -77,7 +136,8 @@ service cloud.firestore {
         && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
         && request.resource.data.comment is string
         && request.resource.data.comment.size() >= 3 && request.resource.data.comment.size() <= 1500
-        && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.status == 'approved';
+        && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.status == 'approved'
+        && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.ownerId != request.auth.uid;
       allow update: if false;
       allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
@@ -87,7 +147,7 @@ service cloud.firestore {
       allow read: if true;
       allow create: if active()
         && request.resource.data.userId == request.auth.uid
-        && request.resource.data.type in ['request','offer']
+        && request.resource.data.type in ['request', 'offer']
         && request.resource.data.status == 'open'
         && request.resource.data.title is string
         && request.resource.data.title.size() >= 5 && request.resource.data.title.size() <= 200
@@ -96,10 +156,70 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (active() && resource.data.userId == request.auth.uid
             && request.resource.data.userId == resource.data.userId
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','title','description','contactPhone','category','neighbourhoodId','updatedAt']));
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'title', 'description', 'contactPhone', 'category', 'neighbourhoodId', 'updatedAt']));
       allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
 
+    // ---------- admin support inbox ----------
+    // New conversations are member <-> admin team. Active admins may read/reply to all
+    // admin threads; members only see their own. Legacy peer threads are read-only.
+    function supportTarget(d) {
+      return d.targetType == 'support' ? d.targetId == null
+        : d.targetType == 'business' ? get(/databases/$(database)/documents/businesses/$(d.targetId)).data.status == 'approved'
+        : get(/databases/$(database)/documents/helpPosts/$(d.targetId)).data.status == 'open';
+    }
+    function threadAccess(d) { return d.get('kind', 'legacy') == 'admin' && (d.get('userId', '') == request.auth.uid || isAdmin()); }
+    match /conversations/{cid} {
+      allow get: if signedIn() && (resource == null || (active() && (threadAccess(resource.data) || (resource.data.get('kind', 'legacy') == 'legacy' && request.auth.uid in resource.data.members))));
+      allow list: if active() && ((resource.data.get('kind', 'legacy') == 'admin' && threadAccess(resource.data)) || (resource.data.get('kind', 'legacy') == 'legacy' && request.auth.uid in resource.data.members));
+      allow create: if active()
+        && request.resource.data.keys().hasOnly(['kind', 'targetType', 'targetId', 'targetTitle', 'userId', 'userName', 'members', 'lastMessage', 'lastSenderId', 'lastMessageAt', 'readAt', 'closedBy', 'createdAt', 'updatedAt'])
+        && request.resource.data.kind == 'admin'
+        && cid.matches('support_[A-Za-z0-9_-]+')
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.userName == me().name
+        && request.resource.data.members == [request.auth.uid]
+        && request.resource.data.targetType in ['support', 'business', 'help']
+        && (request.resource.data.targetType == 'support' ? request.resource.data.targetId == null : request.resource.data.targetId is string)
+        && request.resource.data.targetTitle is string && request.resource.data.targetTitle.size() >= 3 && request.resource.data.targetTitle.size() <= 200
+        && supportTarget(request.resource.data)
+        && request.resource.data.closedBy == null
+        && request.resource.data.lastSenderId == request.auth.uid
+        && request.resource.data.lastMessage is string && request.resource.data.lastMessage.size() >= 2 && request.resource.data.lastMessage.size() <= 2000
+        && request.resource.data.lastMessageAt == request.time
+        && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
+        && request.resource.data.readAt is map && request.resource.data.readAt.keys().hasOnly([request.auth.uid]);
+      allow update: if active() && threadAccess(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'lastMessageAt', 'readAt', 'closedBy', 'updatedAt'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastMessage', 'lastSenderId', 'lastMessageAt'])
+            || (resource.data.closedBy == null && request.resource.data.lastSenderId == request.auth.uid
+                && request.resource.data.lastMessage is string && request.resource.data.lastMessage.size() >= 1 && request.resource.data.lastMessage.size() <= 2000
+                && request.resource.data.lastMessageAt == request.time && request.resource.data.updatedAt == request.time))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['readAt'])
+            || request.resource.data.readAt.diff(resource.data.readAt).affectedKeys().hasOnly([request.auth.uid]))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['closedBy'])
+            || (resource.data.closedBy == null && request.resource.data.closedBy == request.auth.uid)
+            || (resource.data.closedBy == request.auth.uid && request.resource.data.closedBy == null));
+      allow delete: if active() && (resource.data.get('userId', '') == request.auth.uid || (resource.data.get('kind', 'legacy') == 'admin' && isAdmin()) || (resource.data.get('kind', 'legacy') == 'legacy' && request.auth.uid in resource.data.members));
+
+      match /messages/{mid} {
+        function parent() { return get(/databases/$(database)/documents/conversations/$(cid)).data; }
+        function parentAfter() { return getAfter(/databases/$(database)/documents/conversations/$(cid)).data; }
+        allow read: if active() && (threadAccess(parent()) || (parent().get('kind', 'legacy') == 'legacy' && request.auth.uid in parent().members));
+        allow create: if active() && threadAccess(parentAfter())
+          && parentAfter().closedBy == null
+          && request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string && request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 2000
+          && request.resource.data.createdAt == request.time
+          && parentAfter().lastSenderId == request.auth.uid && parentAfter().lastMessage == request.resource.data.text
+          && parentAfter().lastMessageAt == request.time;
+        allow update: if false;
+        allow delete: if active() && (parent().get('userId', '') == request.auth.uid || (parent().get('kind', 'legacy') == 'admin' && isAdmin()) || (parent().get('kind', 'legacy') == 'legacy' && request.auth.uid in parent().members));
+      }
+    }
+
+    // ---------- announcements, moderation, audit, contact ----------
     match /announcements/{annId} {
       allow read: if resource.data.isPublished == true || isAdmin();
       allow create, update, delete: if isAdmin();
@@ -108,7 +228,7 @@ service cloud.firestore {
       allow create: if active() && request.resource.data.reporterId == request.auth.uid && request.resource.data.status == 'open';
       allow read, update, delete: if isAdmin();
     }
-    match /activityLogs/{id} {
+    match /activityLogs/{logId} {
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
       allow read: if isAdmin();
       allow update, delete: if false;

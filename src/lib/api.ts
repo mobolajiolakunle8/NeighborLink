@@ -1,7 +1,7 @@
 // Service layer: every write the app performs goes through here. Each function is a
 // thin, typed wrapper around Firestore/Auth, and the rules decide what is allowed.
 import {
-  addDoc, collection, deleteDoc, doc, getDoc, getDocs, increment, query,
+  addDoc, collection, deleteDoc, deleteField, doc, getDoc, getDocs, increment, limit, query,
   serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import {
@@ -13,7 +13,7 @@ import { deleteObject, listAll, ref as storageRef } from "firebase/storage";
 import { getAuthClient, getDb, getStorageClient } from "./firebase";
 import { DEFAULT_CATEGORIES, DEFAULT_LEGAL, DEFAULT_NEIGHBOURHOODS, DEFAULT_SETTINGS } from "./defaults";
 import type {
-  BusinessStatus, HelpStatus, HelpType, MessageStatus, ReportStatus,
+  BusinessStatus, HelpStatus, HelpType, MessageStatus, NotificationType, ReportStatus,
   ReportTargetType, Role, SiteSettings,
 } from "./types";
 import { slugify } from "./utils";
@@ -45,187 +45,72 @@ export async function ensureProfile(user: User) {
   });
 }
 
-export const ADMIN_SETUP_KEY = process.env.NEXT_PUBLIC_ADMIN_SETUP_KEY || "NEIGHBOURLINK_ADMIN_2026";
-
 export interface RegisterInput {
   name: string; email: string; password: string; role: "resident" | "business" | "admin";
   phone: string; neighbourhood: string;
+  /** One-time setup key, only used when registering the very first administrator. */
   adminSetupKey?: string;
 }
+
+function baseProfile(user: User, name: string, role: Role, extra: Record<string, unknown> = {}) {
+  return {
+    uid: user.uid, name, email: user.email ?? "", role,
+    phone: null, neighbourhood: null, avatarUrl: null, bio: null,
+    isSuspended: false, fcmTokens: [], createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    ...extra,
+  };
+}
+
+/**
+ * Claims the one-time first-administrator bootstrap. The setup key is checked by the
+ * Firestore rules against its SHA-256 hash — it is never stored in this website's code.
+ * Works only once per project; afterwards admins are granted from Dashboard → Users.
+ */
+export async function claimAdminAccess(setupKey: string, user: User, profileName?: string) {
+  const key = setupKey.trim();
+  if (key.length < 8) throw new Error("Please enter the full Admin Setup Key.");
+  const db = getDb();
+  const ref = doc(db, "users", user.uid);
+  const existing = await getDoc(ref);
+  const batch = writeBatch(db);
+  if (existing.exists()) {
+    const data = existing.data();
+    batch.update(ref, { role: "admin", updatedAt: serverTimestamp(), ...(data.adminSetupKey !== undefined ? { adminSetupKey: deleteField() } : {}) });
+  } else {
+    batch.set(ref, baseProfile(user, profileName || user.displayName || "Administrator", "admin"));
+  }
+  batch.set(doc(db, "config", "bootstrap"), { adminUid: user.uid, setupKey: key, claimedAt: serverTimestamp() });
+  try {
+    await batch.commit();
+  } catch (err) {
+    const code = typeof err === "object" && err && "code" in err ? String((err as { code: unknown }).code) : "";
+    if (code === "permission-denied") throw new Error("That setup key is not valid, or the first administrator has already been set up. Ask an existing administrator to grant you access.");
+    throw err;
+  }
+  await logActivity(user.uid, "claim_admin_access", user.email ?? "");
+}
+
 export async function registerUser(input: RegisterInput): Promise<User> {
   const cred = await createUserWithEmailAndPassword(getAuthClient(), input.email.trim(), input.password);
   const user = cred.user;
   await updateProfile(user, { displayName: input.name.trim() });
-
-  const isAdmin = input.role === "admin" && input.adminSetupKey?.trim() === ADMIN_SETUP_KEY;
-  const role = isAdmin ? "admin" : (input.role === "business" ? "business" : "resident");
-
-  const docData: Record<string, unknown> = {
-    uid: user.uid, name: input.name.trim(), email: user.email ?? input.email.trim(), role,
-    phone: input.phone.trim() || null, neighbourhood: input.neighbourhood || null,
-    avatarUrl: null, bio: null, isSuspended: false, fcmTokens: [],
-    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-  };
-  if (isAdmin && input.adminSetupKey) {
-    docData.adminSetupKey = input.adminSetupKey.trim();
+  const extra = { phone: input.phone.trim() || null, neighbourhood: input.neighbourhood || null };
+  const standardRole: Role = input.role === "business" ? "business" : "resident";
+  await setDoc(doc(getDb(), "users", user.uid), baseProfile(user, input.name.trim(), standardRole, extra));
+  if (input.role === "admin" && input.adminSetupKey) {
+    await claimAdminAccess(input.adminSetupKey, user, input.name.trim());
   }
-
-  await setDoc(doc(getDb(), "users", user.uid), docData);
   sendEmailVerification(user).catch(() => undefined);
-  await logActivity(user.uid, "register", role);
+  await logActivity(user.uid, "register", input.role === "admin" ? "admin" : standardRole);
   return user;
 }
 
-/**
- * Claims administrator privileges on an existing account using the authorized Admin Setup Key.
- * Updates Firestore in real time so the dashboard and admin UI unlock immediately.
- */
-export const FIRESTORE_RULES_SNIPPET = `rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function isAdmin() { return signedIn() && me().role == 'admin'; }
-    function active() { return signedIn() && me().isSuspended != true; }
-    function validAdminKey() {
-      return request.resource.data.get('adminSetupKey', '') == 'NEIGHBOURLINK_ADMIN_2026';
-    }
-
-    match /users/{uid} {
-      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
-      allow create: if signedIn() && request.auth.uid == uid
-        && request.resource.data.isSuspended == false
-        && (request.resource.data.role in ['resident', 'business'] || (request.resource.data.role == 'admin' && validAdminKey()));
-      allow update: if isAdmin()
-        || (signedIn() && request.auth.uid == uid && validAdminKey() && request.resource.data.isSuspended == false)
-        || (signedIn() && request.auth.uid == uid
-            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isSuspended','email','uid','createdAt'])
-            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || request.resource.data.role in ['resident', 'business']));
-      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
-    }
-
-    match /siteSettings/{docId} { allow read: if true; allow write: if isAdmin(); }
-    match /categories/{docId} { allow read: if true; allow write: if isAdmin(); }
-    match /neighbourhoods/{docId} { allow read: if true; allow write: if isAdmin(); }
-    match /legalPages/{docId} { allow read: if true; allow write: if isAdmin(); }
-
-    match /businesses/{bizId} {
-      allow read: if resource.data.status == 'approved' || isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
-      allow create: if active()
-        && request.resource.data.ownerId == request.auth.uid
-        && request.resource.data.status == 'pending'
-        && request.resource.data.isFeatured == false
-        && request.resource.data.views == 0
-        && request.resource.data.name is string
-        && request.resource.data.name.size() >= 3 && request.resource.data.name.size() <= 180
-        && request.resource.data.description is string
-        && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 4000;
-      allow update: if isAdmin()
-        || (active() && resource.data.ownerId == request.auth.uid
-            && request.resource.data.ownerId == resource.data.ownerId
-            && request.resource.data.status == 'pending'
-            && request.resource.data.isFeatured == resource.data.isFeatured
-            && request.resource.data.views == resource.data.views)
-        || (resource.data.status == 'approved'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views'])
-            && request.resource.data.views == resource.data.views + 1);
-      allow delete: if isAdmin() || (active() && resource.data.ownerId == request.auth.uid);
-    }
-
-    match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if active()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.rating is int
-        && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
-        && request.resource.data.comment is string
-        && request.resource.data.comment.size() >= 3 && request.resource.data.comment.size() <= 1500
-        && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.status == 'approved';
-      allow update: if false;
-      allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-    }
-
-    match /helpPosts/{postId} {
-      allow read: if true;
-      allow create: if active()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.type in ['request','offer']
-        && request.resource.data.status == 'open'
-        && request.resource.data.title is string
-        && request.resource.data.title.size() >= 5 && request.resource.data.title.size() <= 200
-        && request.resource.data.description is string
-        && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 3000;
-      allow update: if isAdmin()
-        || (active() && resource.data.userId == request.auth.uid
-            && request.resource.data.userId == resource.data.userId
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','title','description','contactPhone','category','neighbourhoodId','updatedAt']));
-      allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-    }
-
-    match /announcements/{annId} {
-      allow read: if resource.data.isPublished == true || isAdmin();
-      allow create, update, delete: if isAdmin();
-    }
-    match /reports/{reportId} {
-      allow create: if active() && request.resource.data.reporterId == request.auth.uid && request.resource.data.status == 'open';
-      allow read, update, delete: if isAdmin();
-    }
-    match /activityLogs/{logId} {
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow read: if isAdmin();
-      allow update, delete: if false;
-    }
-    match /contactMessages/{msgId} {
-      allow create: if request.resource.data.name is string
-        && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 120
-        && request.resource.data.email is string
-        && request.resource.data.email.matches('.+@.+[.].+')
-        && request.resource.data.message is string
-        && request.resource.data.message.size() >= 10 && request.resource.data.message.size() <= 3000
-        && request.resource.data.status == 'new';
-      allow read, update, delete: if isAdmin();
-    }
-  }
-}`;
-
-export async function claimAdminAccess(setupKey: string, user: User, profileName?: string) {
-  if (setupKey.trim() !== ADMIN_SETUP_KEY) {
-    throw new Error("Invalid Admin Setup Key. Please verify the key and try again.");
-  }
-  const db = getDb();
-  const ref = doc(db, "users", user.uid);
-  const existing = await getDoc(ref);
-  if (existing.exists()) {
-    await updateDoc(ref, {
-      role: "admin",
-      adminSetupKey: setupKey.trim(),
-      updatedAt: serverTimestamp(),
-    });
-  } else {
-    await setDoc(ref, {
-      uid: user.uid,
-      name: profileName || user.displayName || "Administrator",
-      email: user.email ?? "",
-      role: "admin",
-      adminSetupKey: setupKey.trim(),
-      phone: null,
-      neighbourhood: null,
-      avatarUrl: null,
-      bio: null,
-      isSuspended: false,
-      fcmTokens: [],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  }
-  await logActivity(user.uid, "claim_admin_access", user.email ?? "");
-}
 export async function loginUser(email: string, password: string): Promise<Role> {
   const cred = await signInWithEmailAndPassword(getAuthClient(), email.trim(), password);
   await ensureProfile(cred.user);
   const snap = await getDoc(doc(getDb(), "users", cred.user.uid));
   const data = snap.data() as { role?: Role; isSuspended?: boolean } | undefined;
-  if (data?.isSuspended) { await signOut(getAuthClient()); throw new Error("This account has been suspended. Please contact +2349030192034."); }
+  if (data?.isSuspended) { await signOut(getAuthClient()); const reason = (snap.data() as { suspendedReason?: string } | undefined)?.suspendedReason; throw new Error(`This account has been suspended${reason ? `: ${reason}` : ""}. Please contact +2349030192034.`); }
   await logActivity(cred.user.uid, "login");
   return data?.role ?? "resident";
 }
@@ -238,7 +123,8 @@ export interface ProfilePatch {
   avatarUrl: string | null; role: Role;
 }
 export async function updateMyProfile(uid: string, patch: ProfilePatch) {
-  await updateDoc(doc(getDb(), "users", uid), { ...patch, updatedAt: serverTimestamp() });
+  // deleteField() also cleans up any legacy setup-key field from older builds.
+  await updateDoc(doc(getDb(), "users", uid), { ...patch, adminSetupKey: deleteField(), updatedAt: serverTimestamp() });
   await logActivity(uid, "update_profile");
 }
 /** Permanently deletes the signed-in account after password re-authentication. */
@@ -248,12 +134,23 @@ export async function deleteMyAccount(password: string) {
   if (!user || !user.email) throw new Error("Please log in again to delete your account.");
   await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
   const db = getDb(); const uid = user.uid;
-  const [biz, help, reviews] = await Promise.all([
+  // Private conversations (both participants' copies are the same documents).
+  const convs = await getDocs(query(collection(db, "conversations"), where("members", "array-contains", uid)));
+  for (const c of convs.docs) {
+    const msgs = await getDocs(collection(c.ref, "messages"));
+    for (let i = 0; i < msgs.docs.length; i += 400) {
+      const b = writeBatch(db); msgs.docs.slice(i, i + 400).forEach(m => b.delete(m.ref)); await b.commit();
+    }
+    await deleteDoc(c.ref);
+  }
+  const [biz, help, reviews, saved, notes] = await Promise.all([
     getDocs(query(collection(db, "businesses"), where("ownerId", "==", uid))),
     getDocs(query(collection(db, "helpPosts"), where("userId", "==", uid))),
     getDocs(query(collection(db, "reviews"), where("userId", "==", uid))),
+    getDocs(collection(db, "users", uid, "saved")),
+    getDocs(collection(db, "users", uid, "notifications")),
   ]);
-  const refs = [...biz.docs, ...help.docs, ...reviews.docs].map(d => d.ref);
+  const refs = [...biz.docs, ...help.docs, ...reviews.docs, ...saved.docs, ...notes.docs].map(d => d.ref);
   for (let i = 0; i < refs.length; i += 400) {
     const batch = writeBatch(db); refs.slice(i, i + 400).forEach(r => batch.delete(r)); await batch.commit();
   }
@@ -265,26 +162,86 @@ export async function deleteMyAccount(password: string) {
   await deleteUser(user);
 }
 
+export async function setMyNeighbourhood(uid: string, neighbourhoodId: string | null) {
+  await updateDoc(doc(getDb(), "users", uid), { neighbourhood: neighbourhoodId, adminSetupKey: deleteField(), updatedAt: serverTimestamp() });
+}
+
+// ---------------------------------------------------------------- notifications
+/** Writes an in-app notification for another user. Failures never block the main action. */
+export async function notifyUser(toUid: string, n: { type: NotificationType; title: string; body: string; link: string }) {
+  const actor = getAuthClient().currentUser;
+  if (!actor || !toUid || actor.uid === toUid) return;
+  try {
+    await addDoc(collection(getDb(), "users", toUid, "notifications"), {
+      type: n.type, title: n.title.slice(0, 160), body: n.body.slice(0, 400), link: n.link,
+      actorId: actor.uid, read: false, createdAt: serverTimestamp(),
+    });
+  } catch { /* best-effort */ }
+}
+export async function markNotificationRead(uid: string, id: string) {
+  await updateDoc(doc(getDb(), "users", uid, "notifications", id), { read: true });
+}
+export async function markAllNotificationsRead(uid: string, ids: string[]) {
+  const db = getDb();
+  for (let i = 0; i < ids.length; i += 400) {
+    const b = writeBatch(db); ids.slice(i, i + 400).forEach(id => b.update(doc(db, "users", uid, "notifications", id), { read: true })); await b.commit();
+  }
+}
+export async function deleteNotification(uid: string, id: string) {
+  await deleteDoc(doc(getDb(), "users", uid, "notifications", id));
+}
+
+// ---------------------------------------------------------------- saved businesses
+export async function setSaved(uid: string, businessId: string, saved: boolean) {
+  const ref = doc(getDb(), "users", uid, "saved", businessId);
+  if (saved) await setDoc(ref, { businessId, savedAt: serverTimestamp() });
+  else await deleteDoc(ref);
+}
+
 // ---------------------------------------------------------------- business listings
 export interface BusinessInput {
   name: string; description: string; categoryId: string; neighbourhoodId: string;
   phone: string; email: string; address: string; website: string; openingHours: string; imageUrl: string;
+  whatsappEnabled: boolean; latitude: number | null; longitude: number | null;
 }
 export async function createBusiness(owner: { uid: string; name: string }, input: BusinessInput) {
   const ref = await addDoc(collection(getDb(), "businesses"), {
     ...clean(input), ownerId: owner.uid, ownerName: owner.name, status: "pending",
-    isFeatured: false, views: 0, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    isFeatured: false, views: 0, verificationStatus: "none", locationUpdatedAt: serverTimestamp(), createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
   });
   await logActivity(owner.uid, "submit_business", input.name);
   return ref.id;
 }
 export async function updateBusiness(id: string, input: BusinessInput, actorUid: string) {
-  await updateDoc(doc(getDb(), "businesses", id), { ...clean(input), status: "pending", updatedAt: serverTimestamp() });
+  await updateDoc(doc(getDb(), "businesses", id), { ...clean(input), status: "pending", locationUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() });
   await logActivity(actorUid, "update_business", input.name);
 }
 export async function setBusinessStatus(id: string, status: BusinessStatus, actorUid: string) {
-  await updateDoc(doc(getDb(), "businesses", id), { status, updatedAt: serverTimestamp() });
+  const ref = doc(getDb(), "businesses", id);
+  const snap = await getDoc(ref);
+  await updateDoc(ref, { status, updatedAt: serverTimestamp() });
   await logActivity(actorUid, "moderate_business", `${id}:${status}`);
+  const b = snap.data();
+  if (b?.ownerId && (status === "approved" || status === "rejected")) {
+    await notifyUser(b.ownerId, {
+      type: "listing",
+      title: status === "approved" ? `“${b.name}” is now live` : `“${b.name}” needs changes`,
+      body: status === "approved" ? "Your listing was approved and now appears in the directory." : "Your listing was not approved. Review the details and resubmit, or contact us for help.",
+      link: status === "approved" ? `/business/${id}` : "/profile#my-listings",
+    });
+  }
+}
+/** Approve or reject several listings at once. Returns the number processed. */
+export async function bulkSetBusinessStatus(ids: string[], status: BusinessStatus, actorUid: string) {
+  let n = 0;
+  for (const id of ids) { await setBusinessStatus(id, status, actorUid); n++; }
+  return n;
+}
+export async function adminUpdateBusinessLocation(id: string, latitude: number | null, longitude: number | null, actorUid: string) {
+  if ((latitude === null) !== (longitude === null)) throw new Error("Set both coordinates or clear both.");
+  if (latitude !== null && (!Number.isFinite(latitude) || Math.abs(latitude) > 90 || !Number.isFinite(longitude!) || Math.abs(longitude!) > 180)) throw new Error("Invalid coordinates.");
+  await updateDoc(doc(getDb(), "businesses", id), { latitude, longitude, locationUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  await logActivity(actorUid, "admin_update_location", id);
 }
 export async function setBusinessFeatured(id: string, featured: boolean, actorUid: string) {
   await updateDoc(doc(getDb(), "businesses", id), { isFeatured: featured, updatedAt: serverTimestamp() });
@@ -298,12 +255,131 @@ export async function recordBusinessView(id: string) {
   try { await updateDoc(doc(getDb(), "businesses", id), { views: increment(1) }); } catch { /* counting views is best-effort */ }
 }
 
+// ---------------------------------------------------------------- verification
+export async function requestVerification(id: string, cacNumber: string, note: string, actorUid: string) {
+  const cac = cacNumber.trim().toUpperCase();
+  if (cac.length < 4 || cac.length > 40) throw new Error("Please enter a valid CAC registration number (e.g. RC 1234567 or BN 1234567).");
+  await updateDoc(doc(getDb(), "businesses", id), {
+    verificationStatus: "requested", cacNumber: cac, verificationNote: note.trim().slice(0, 500) || null,
+    verificationRequestedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+  await logActivity(actorUid, "request_verification", id);
+}
+export async function setVerification(id: string, status: "verified" | "rejected", actorUid: string) {
+  const ref = doc(getDb(), "businesses", id);
+  const snap = await getDoc(ref);
+  await updateDoc(ref, { verificationStatus: status, updatedAt: serverTimestamp() });
+  await logActivity(actorUid, "set_verification", `${id}:${status}`);
+  const b = snap.data();
+  if (b?.ownerId) {
+    await notifyUser(b.ownerId, {
+      type: "verification",
+      title: status === "verified" ? `“${b.name}” is now a Verified business` : `Verification for “${b.name}” was not approved`,
+      body: status === "verified" ? "Your verified badge is now shown on your listing." : "We couldn't confirm your registration details. Check your CAC number and request again.",
+      link: `/business/${id}`,
+    });
+  }
+}
+
 // ---------------------------------------------------------------- reviews
 export async function addReview(businessId: string, author: { uid: string; name: string }, rating: number, comment: string) {
   await addDoc(collection(getDb(), "reviews"), {
     businessId, userId: author.uid, authorName: author.name, rating, comment: comment.trim(), createdAt: serverTimestamp(),
   });
   await logActivity(author.uid, "review_business", businessId);
+  const b = (await getDoc(doc(getDb(), "businesses", businessId))).data();
+  if (b?.ownerId) {
+    await notifyUser(b.ownerId, { type: "review", title: `New ${rating}-star review for “${b.name}”`, body: comment.trim().slice(0, 200), link: `/business/${businessId}` });
+  }
+}
+
+// ---------------------------------------------------------------- admin support inbox
+export function conversationId(targetType: "business" | "help", targetId: string, uid: string) {
+  return `support_${targetType}_${targetId}_${uid}`;
+}
+
+async function createAdminThread(
+  me: { uid: string; name: string },
+  target: { type: "support" | "business" | "help"; id: string | null; title: string },
+  text: string,
+  cid: string,
+) {
+  const msg = text.trim();
+  if (msg.length < 2 || msg.length > 2000) throw new Error("Please write a message between 2 and 2000 characters.");
+  const db = getDb();
+  const ref = doc(db, "conversations", cid);
+  const existing = await getDoc(ref);
+  if (existing.exists()) {
+    if (existing.data().closedBy) throw new Error("This conversation is closed. Please start a new message to the admin team.");
+    await sendMessage(cid, me.uid, msg); return cid;
+  }
+  const batch = writeBatch(db);
+  batch.set(ref, {
+    kind: "admin", targetType: target.type, targetId: target.id, targetTitle: target.title.trim().slice(0, 200),
+    userId: me.uid, userName: me.name, members: [me.uid],
+    lastMessage: msg, lastSenderId: me.uid, lastMessageAt: serverTimestamp(),
+    readAt: { [me.uid]: serverTimestamp() }, closedBy: null,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+  batch.set(doc(collection(ref, "messages")), { senderId: me.uid, text: msg, createdAt: serverTimestamp() });
+  await batch.commit();
+  await logActivity(me.uid, "message_admin", target.title);
+  return cid;
+}
+
+/** Every new listing enquiry is routed to the admin team, never to the listing owner. */
+export async function startConversation(
+  me: { uid: string; name: string },
+  target: { type: "business" | "help"; id: string; title: string; ownerId?: string; ownerName?: string },
+  text: string,
+) {
+  return createAdminThread(me, target, text, conversationId(target.type, target.id, me.uid));
+}
+
+export async function startSupportMessage(me: { uid: string; name: string }, subject: string, text: string) {
+  if (subject.trim().length < 3 || subject.trim().length > 160) throw new Error("Please add a subject between 3 and 160 characters.");
+  const cid = `support_${me.uid}_${doc(collection(getDb(), "conversations")).id}`;
+  return createAdminThread(me, { type: "support", id: null, title: subject.trim() }, text, cid);
+}
+
+/** Sends a member follow-up or an admin reply. Only admin replies notify the member. */
+export async function sendMessage(cid: string, senderUid: string, text: string) {
+  const msg = text.trim();
+  if (!msg || msg.length > 2000) throw new Error("Messages must be between 1 and 2000 characters.");
+  const db = getDb();
+  const ref = doc(db, "conversations", cid);
+  const conversation = await getDoc(ref);
+  if (!conversation.exists() || conversation.data().kind !== "admin") throw new Error("This conversation is no longer available for replies.");
+  const batch = writeBatch(db);
+  batch.set(doc(collection(ref, "messages")), { senderId: senderUid, text: msg, createdAt: serverTimestamp() });
+  batch.update(ref, {
+    lastMessage: msg, lastSenderId: senderUid, lastMessageAt: serverTimestamp(),
+    [`readAt.${senderUid}`]: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
+  const memberUid = conversation.data().userId as string;
+  if (senderUid !== memberUid) {
+    await notifyUser(memberUid, {
+      type: "message", title: "Reply from the NeighbourLink admin team",
+      body: msg.slice(0, 200), link: `/profile?message=${encodeURIComponent(cid)}#messages`,
+    });
+    await logActivity(senderUid, "admin_reply", cid);
+  }
+}
+export async function markConversationRead(cid: string, uid: string) {
+  try { await updateDoc(doc(getDb(), "conversations", cid), { [`readAt.${uid}`]: serverTimestamp() }); } catch { /* best-effort */ }
+}
+export async function setConversationClosed(cid: string, uid: string, closed: boolean) {
+  await updateDoc(doc(getDb(), "conversations", cid), { closedBy: closed ? uid : null, updatedAt: serverTimestamp() });
+}
+export async function deleteConversation(cid: string) {
+  const db = getDb(); const ref = doc(db, "conversations", cid);
+  while (true) {
+    const msgs = await getDocs(query(collection(ref, "messages"), limit(300)));
+    if (!msgs.empty) { const b = writeBatch(db); msgs.docs.forEach(m => b.delete(m.ref)); await b.commit(); }
+    if (msgs.size < 300) break;
+  }
+  await deleteDoc(ref);
 }
 
 // ---------------------------------------------------------------- help board
@@ -366,7 +442,7 @@ export async function deleteTaxonomy(kind: "categories" | "neighbourhoods", id: 
   await deleteDoc(doc(getDb(), kind, id));
   await logActivity(actorUid, `delete_${kind}`, id);
 }
-export interface AnnouncementInput { title: string; body: string; imageUrl: string; isPinned: boolean; isPublished: boolean; }
+export interface AnnouncementInput { title: string; body: string; imageUrl: string; isPinned: boolean; isPublished: boolean; neighbourhoodId?: string; }
 export async function createAnnouncement(input: AnnouncementInput, actorUid: string) {
   await addDoc(collection(getDb(), "announcements"), {
     ...clean(input), publishedAt: serverTimestamp(), createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -419,9 +495,17 @@ export async function initializeDefaults(actorUid: string) {
 }
 
 // ---------------------------------------------------------------- admin: users
-export async function adminUpdateUser(uid: string, patch: { role?: Role; isSuspended?: boolean }, actorUid: string) {
+export async function adminUpdateUser(uid: string, patch: { role?: Role; isSuspended?: boolean; suspendedReason?: string | null }, actorUid: string) {
   await updateDoc(doc(getDb(), "users", uid), { ...patch, updatedAt: serverTimestamp() });
   await logActivity(actorUid, "admin_update_user", `${uid}:${JSON.stringify(patch)}`);
+  if (patch.isSuspended !== undefined) {
+    await notifyUser(uid, {
+      type: "account",
+      title: patch.isSuspended ? "Your account has been suspended" : "Your account has been restored",
+      body: patch.isSuspended ? (patch.suspendedReason || "Contact +2349030192034 for details.") : "You can post, review and message again.",
+      link: "/profile",
+    });
+  }
 }
 /** Removes the Firestore profile. The Firebase Auth account itself can only be deleted
  * with the Admin SDK or in the Firebase Console; the UI makes this explicit to admins. */
