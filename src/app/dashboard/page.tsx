@@ -4,11 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   BarChart3, FileText, Flag, HeartHandshake, Mail, Megaphone, MapPin, ScrollText,
-  Settings2, ShieldCheck, Store, Tags, Users, KeyRound, CheckCircle2,
+  Settings2, ShieldCheck, Store, Tags, Users, KeyRound, CheckCircle2, Copy,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Alert, CardSkeleton, EmptyState, Field, Spinner } from "@/components/ui";
-import { claimAdminAccess, ADMIN_SETUP_KEY } from "@/lib/api";
+import { claimAdminAccess, ADMIN_SETUP_KEY, FIRESTORE_RULES_SNIPPET } from "@/lib/api";
 import { friendlyError } from "@/lib/utils";
 import Overview from "@/components/admin/Overview";
 import SettingsPanel from "@/components/admin/SettingsPanel";
@@ -43,6 +43,8 @@ export default function DashboardPage() {
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimSuccess, setClaimSuccess] = useState<string | null>(null);
+  const [showRules, setShowRules] = useState(false);
+  const [copiedRules, setCopiedRules] = useState(false);
 
   if (loading) {
     return <div className="mx-auto max-w-7xl px-4 py-10"><CardSkeleton count={2} className="h-24" /></div>;
@@ -110,7 +112,44 @@ export default function DashboardPage() {
               />
             </Field>
 
-            {claimError && <Alert kind="error">{claimError}</Alert>}
+            {claimError && (
+              <div className="space-y-3">
+                <Alert kind="error">{claimError}</Alert>
+                <div className="rounded-xl border border-line bg-white p-4 space-y-2 text-xs">
+                  <p className="font-bold text-forest">
+                    Need to publish the updated Firestore Security Rules in Firebase Console?
+                  </p>
+                  <p className="text-muted">
+                    Copy the rules below and paste them into <strong>Firebase Console → Firestore Database → Rules</strong>, then click <strong>Publish</strong>.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      className="btn-outline !py-1.5 !px-3 text-xs"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(FIRESTORE_RULES_SNIPPET);
+                        setCopiedRules(true);
+                        setTimeout(() => setCopiedRules(false), 2500);
+                      }}
+                    >
+                      <Copy size={13} /> {copiedRules ? "Copied to clipboard!" : "Copy Firestore Rules"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost border border-line !py-1.5 !px-3 text-xs"
+                      onClick={() => setShowRules((v) => !v)}
+                    >
+                      {showRules ? "Hide rules" : "View rules"}
+                    </button>
+                  </div>
+                  {showRules && (
+                    <pre className="mt-2 max-h-64 overflow-auto rounded-xl bg-forest p-3 text-[11px] leading-relaxed text-cream">
+                      {FIRESTORE_RULES_SNIPPET}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            )}
             {claimSuccess && (
               <Alert kind="success">
                 <span className="flex items-center gap-1.5"><CheckCircle2 size={16} />{claimSuccess}</span>

@@ -9,7 +9,7 @@
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
-import { getFirestore, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,21 +67,31 @@ try {
 }
 
 try {
-  await setDoc(doc(db, "users", user.uid), {
-    uid: user.uid,
-    name: "Administrator",
-    email: email.trim(),
-    role: "admin",
-    adminSetupKey: setupKey.trim(),
-    phone: null,
-    neighbourhood: null,
-    avatarUrl: null,
-    bio: null,
-    isSuspended: false,
-    fcmTokens: [],
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
+  const ref = doc(db, "users", user.uid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    await updateDoc(ref, {
+      role: "admin",
+      adminSetupKey: setupKey.trim(),
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    await setDoc(ref, {
+      uid: user.uid,
+      name: "Administrator",
+      email: email.trim(),
+      role: "admin",
+      adminSetupKey: setupKey.trim(),
+      phone: null,
+      neighbourhood: null,
+      avatarUrl: null,
+      bio: null,
+      isSuspended: false,
+      fcmTokens: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
 
   console.log(`
 ==================================================

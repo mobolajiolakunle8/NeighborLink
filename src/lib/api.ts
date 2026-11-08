@@ -80,26 +80,144 @@ export async function registerUser(input: RegisterInput): Promise<User> {
  * Claims administrator privileges on an existing account using the authorized Admin Setup Key.
  * Updates Firestore in real time so the dashboard and admin UI unlock immediately.
  */
+export const FIRESTORE_RULES_SNIPPET = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return signedIn() && me().role == 'admin'; }
+    function active() { return signedIn() && me().isSuspended != true; }
+    function validAdminKey() {
+      return request.resource.data.get('adminSetupKey', '') == 'NEIGHBOURLINK_ADMIN_2026';
+    }
+
+    match /users/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.isSuspended == false
+        && (request.resource.data.role in ['resident', 'business'] || (request.resource.data.role == 'admin' && validAdminKey()));
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == uid && validAdminKey() && request.resource.data.isSuspended == false)
+        || (signedIn() && request.auth.uid == uid
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isSuspended','email','uid','createdAt'])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || request.resource.data.role in ['resident', 'business']));
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    }
+
+    match /siteSettings/{docId} { allow read: if true; allow write: if isAdmin(); }
+    match /categories/{docId} { allow read: if true; allow write: if isAdmin(); }
+    match /neighbourhoods/{docId} { allow read: if true; allow write: if isAdmin(); }
+    match /legalPages/{docId} { allow read: if true; allow write: if isAdmin(); }
+
+    match /businesses/{bizId} {
+      allow read: if resource.data.status == 'approved' || isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if active()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.isFeatured == false
+        && request.resource.data.views == 0
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 3 && request.resource.data.name.size() <= 180
+        && request.resource.data.description is string
+        && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 4000;
+      allow update: if isAdmin()
+        || (active() && resource.data.ownerId == request.auth.uid
+            && request.resource.data.ownerId == resource.data.ownerId
+            && request.resource.data.status == 'pending'
+            && request.resource.data.isFeatured == resource.data.isFeatured
+            && request.resource.data.views == resource.data.views)
+        || (resource.data.status == 'approved'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views'])
+            && request.resource.data.views == resource.data.views + 1);
+      allow delete: if isAdmin() || (active() && resource.data.ownerId == request.auth.uid);
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if active()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
+        && request.resource.data.comment is string
+        && request.resource.data.comment.size() >= 3 && request.resource.data.comment.size() <= 1500
+        && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.status == 'approved';
+      allow update: if false;
+      allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    match /helpPosts/{postId} {
+      allow read: if true;
+      allow create: if active()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.type in ['request','offer']
+        && request.resource.data.status == 'open'
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 5 && request.resource.data.title.size() <= 200
+        && request.resource.data.description is string
+        && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 3000;
+      allow update: if isAdmin()
+        || (active() && resource.data.userId == request.auth.uid
+            && request.resource.data.userId == resource.data.userId
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','title','description','contactPhone','category','neighbourhoodId','updatedAt']));
+      allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    match /announcements/{annId} {
+      allow read: if resource.data.isPublished == true || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+    match /reports/{reportId} {
+      allow create: if active() && request.resource.data.reporterId == request.auth.uid && request.resource.data.status == 'open';
+      allow read, update, delete: if isAdmin();
+    }
+    match /activityLogs/{logId} {
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+    match /contactMessages/{msgId} {
+      allow create: if request.resource.data.name is string
+        && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 120
+        && request.resource.data.email is string
+        && request.resource.data.email.matches('.+@.+[.].+')
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 10 && request.resource.data.message.size() <= 3000
+        && request.resource.data.status == 'new';
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}`;
+
 export async function claimAdminAccess(setupKey: string, user: User, profileName?: string) {
   if (setupKey.trim() !== ADMIN_SETUP_KEY) {
     throw new Error("Invalid Admin Setup Key. Please verify the key and try again.");
   }
   const db = getDb();
-  await setDoc(doc(db, "users", user.uid), {
-    uid: user.uid,
-    name: profileName || user.displayName || "Administrator",
-    email: user.email ?? "",
-    role: "admin",
-    adminSetupKey: setupKey.trim(),
-    phone: null,
-    neighbourhood: null,
-    avatarUrl: null,
-    bio: null,
-    isSuspended: false,
-    fcmTokens: [],
-    updatedAt: serverTimestamp(),
-    createdAt: serverTimestamp(),
-  }, { merge: true });
+  const ref = doc(db, "users", user.uid);
+  const existing = await getDoc(ref);
+  if (existing.exists()) {
+    await updateDoc(ref, {
+      role: "admin",
+      adminSetupKey: setupKey.trim(),
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    await setDoc(ref, {
+      uid: user.uid,
+      name: profileName || user.displayName || "Administrator",
+      email: user.email ?? "",
+      role: "admin",
+      adminSetupKey: setupKey.trim(),
+      phone: null,
+      neighbourhood: null,
+      avatarUrl: null,
+      bio: null,
+      isSuspended: false,
+      fcmTokens: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
   await logActivity(user.uid, "claim_admin_access", user.email ?? "");
 }
 export async function loginUser(email: string, password: string): Promise<Role> {

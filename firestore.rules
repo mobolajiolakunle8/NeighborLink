@@ -1,7 +1,5 @@
 rules_version = '2';
 // NeighbourLink — Cloud Firestore security rules.
-// Principles: deny by default · roles live only in users/{uid}.role and can only be
-// changed by an admin or claimed with the authorized Admin Setup Key.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -10,41 +8,32 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
     function isAdmin() { return signedIn() && me().role == 'admin'; }
-    // Suspended accounts can read public content but cannot write anything.
     function active() { return signedIn() && me().isSuspended != true; }
-
-    function validAdminKey(d) {
-      return d.get('adminSetupKey', '') == 'NEIGHBOURLINK_ADMIN_2026';
+    function validAdminKey() {
+      return request.resource.data.get('adminSetupKey', '') == 'NEIGHBOURLINK_ADMIN_2026';
     }
 
     // ---------- users (private profiles) ----------
     match /users/{uid} {
       allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
 
-      // Self-registration: resident or business by default; admin allowed with valid setup passkey
       allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.isSuspended == false
         && (
           request.resource.data.role in ['resident', 'business']
-          || (request.resource.data.role == 'admin' && validAdminKey(request.resource.data))
-        )
-        && request.resource.data.isSuspended == false
-        && request.resource.data.keys().hasOnly([
-          'uid','name','email','role','adminSetupKey','phone','neighbourhood','avatarUrl',
-          'bio','isSuspended','fcmTokens','createdAt','updatedAt'
-        ]);
+          || (request.resource.data.role == 'admin' && validAdminKey())
+        );
 
-      // Profile updates:
-      // Admin can update any profile.
-      // Owner can update their own profile; can activate admin role only with valid setup passkey.
-      allow update: if isAdmin() || (
-        signedIn() && request.auth.uid == uid
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isSuspended','email','uid','createdAt'])
-        && (
-          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
-            || request.resource.data.role in ['resident', 'business'])
-          || (request.resource.data.role == 'admin' && validAdminKey(request.resource.data))
-        )
-      );
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == uid && validAdminKey() && request.resource.data.isSuspended == false)
+        || (
+          signedIn() && request.auth.uid == uid
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isSuspended','email','uid','createdAt'])
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+            || request.resource.data.role in ['resident', 'business']
+          )
+        );
 
       allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
@@ -119,7 +108,7 @@ service cloud.firestore {
       allow create: if active() && request.resource.data.reporterId == request.auth.uid && request.resource.data.status == 'open';
       allow read, update, delete: if isAdmin();
     }
-    match /activityLogs/{logId} {
+    match /activityLogs/{id} {
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
       allow read: if isAdmin();
       allow update, delete: if false;
@@ -134,6 +123,5 @@ service cloud.firestore {
         && request.resource.data.status == 'new';
       allow read, update, delete: if isAdmin();
     }
-    // Everything not matched above is denied by default.
   }
 }
