@@ -1,0 +1,25 @@
+# dependencies & build output
+node_modules
+.next
+src/.next
+out
+next-env.d.ts
+*.tsbuildinfo
+.vercel
+
+# environment & secrets — never commit local/secret values
+.env
+.env.local
+.env.*.local
+# Public production web config is intentionally committed as a deployment fallback.
+!.env.production
+!.env.example
+*service-account*.json
+*adminsdk*.json
+
+# Firebase local artefacts
+.firebase
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+database-debug.log
