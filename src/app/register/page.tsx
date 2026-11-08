@@ -3,8 +3,8 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { HeartHandshake, Store, UserPlus } from "lucide-react";
-import { registerUser, type RegisterInput } from "@/lib/api";
+import { HeartHandshake, Store, UserPlus, KeyRound } from "lucide-react";
+import { registerUser, ADMIN_SETUP_KEY, type RegisterInput } from "@/lib/api";
 import { useSite } from "@/context/SiteContext";
 import { friendlyError, isEmail, isPhone } from "@/lib/utils";
 import { Alert, Field, Spinner } from "@/components/ui";
@@ -27,6 +27,7 @@ export default function RegisterPage() {
     if (form.password.length < 8) return "Password must be at least 8 characters.";
     if (form.password !== form.confirm) return "Passwords do not match.";
     if (form.phone && !isPhone(form.phone)) return "Please enter a valid phone number.";
+    if (form.role === "admin" && !form.adminSetupKey?.trim()) return "Please enter the Admin Setup Key to register as Administrator.";
     if (!form.terms) return "Please accept the Terms and Privacy Policy to continue.";
     return null;
   }
@@ -39,7 +40,7 @@ export default function RegisterPage() {
     setBusy(true);
     try {
       await registerUser(form);
-      router.push("/profile");
+      router.push(form.role === "admin" ? "/dashboard" : "/profile");
     } catch (err) {
       setError(friendlyError(err));
     } finally {
@@ -71,6 +72,34 @@ export default function RegisterPage() {
           {roleCard("resident", "Resident", "Browse, review, request & offer help", HeartHandshake)}
           {roleCard("business", "Business owner", "List your business in the directory", Store)}
         </div>
+
+        <div className="mt-2 text-right">
+          <button
+            type="button"
+            onClick={() => set("role", form.role === "admin" ? "resident" : "admin")}
+            className="text-xs font-bold text-muted hover:text-forest underline cursor-pointer"
+          >
+            {form.role === "admin" ? "Switch back to standard account" : "Site owner? Register as Administrator"}
+          </button>
+        </div>
+
+        {form.role === "admin" && (
+          <div className="mt-3 rounded-2xl border border-gold/40 bg-gold-soft/30 p-4 space-y-2">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-forest">
+              <KeyRound size={14} /> Administrator Registration (Requires Setup Key)
+            </p>
+            <Field label="Admin Setup Key" hint="Default key: NEIGHBOURLINK_ADMIN_2026">
+              <input
+                type="text"
+                className="input font-mono text-sm !py-1.5"
+                value={form.adminSetupKey || ""}
+                onChange={(e) => set("adminSetupKey", e.target.value)}
+                placeholder="NEIGHBOURLINK_ADMIN_2026"
+                required
+              />
+            </Field>
+          </div>
+        )}
 
         <form onSubmit={onSubmit} noValidate className="mt-6 space-y-4" aria-label="Create account">
           <Field label="Full name *"><input value={form.name} onChange={(e) => set("name", e.target.value)} className="input" placeholder="e.g. Adaeze Okafor" autoComplete="name" /></Field>

@@ -2,25 +2,12 @@
 // module on the server (during SSR or the build) never touches the network.
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
-import {
-  getFirestore,
-  initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
-  type Firestore,
-} from "firebase/firestore";
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, type Firestore } from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 import { getAnalytics, isSupported } from "firebase/analytics";
 import webConfig from "@/config/firebase.web.json";
 
-/**
- * Web app configuration, read from NEXT_PUBLIC_* variables (.env.local locally,
- * apphosting.yaml on Firebase App Hosting). These identify the project and are safe
- * to ship to browsers. They are NOT secrets — rules protect the data.
- */
-// NEXT_PUBLIC_* values still win when configured in Vercel / Firebase App Hosting.
-// The committed JSON holds the same PUBLIC web identifiers, so a deployment cannot
-// silently lose its Firebase config if a .env.production file is absent or ignored.
+/** Web app configuration, read from NEXT_PUBLIC_* variables. These are public identifiers. */
 export const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || webConfig.apiKey,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || webConfig.authDomain,
@@ -32,56 +19,30 @@ export const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || webConfig.measurementId,
 };
 
-export const isFirebaseConfigured = Boolean(
-  firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId,
-);
-
+export const isFirebaseConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
 let storage: FirebaseStorage | undefined;
 
 export function getFirebaseApp(): FirebaseApp {
-  if (!isFirebaseConfigured) {
-    throw new Error("Firebase is not configured. Check .env.local for local development, or .env.production / Vercel build-time environment variables for deployment.");
-  }
+  if (!isFirebaseConfigured) throw new Error("Firebase is not configured. Check .env.local for local development, or .env.production / Vercel build-time environment variables for deployment.");
   if (!app) app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   return app;
 }
-
-export function getAuthClient(): Auth {
-  if (!auth) auth = getAuth(getFirebaseApp());
-  return auth;
-}
-
-/**
- * Firestore with offline persistence and multi-tab sync in the browser, so a user
- * with several tabs open sees one consistent, live view of the data.
- */
+export function getAuthClient(): Auth { if (!auth) auth = getAuth(getFirebaseApp()); return auth; }
 export function getDb(): Firestore {
   if (!db) {
     const instance = getFirebaseApp();
-    if (typeof window === "undefined") {
-      db = getFirestore(instance);
-    } else {
-      try {
-        db = initializeFirestore(instance, {
-          localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-        });
-      } catch {
-        // Already initialised (e.g. hot reload) — reuse the existing instance.
-        db = getFirestore(instance);
-      }
+    if (typeof window === "undefined") db = getFirestore(instance);
+    else {
+      try { db = initializeFirestore(instance, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
+      catch { db = getFirestore(instance); }
     }
   }
   return db;
 }
-
-export function getStorageClient(): FirebaseStorage {
-  if (!storage) storage = getStorage(getFirebaseApp());
-  return storage;
-}
-
+export function getStorageClient(): FirebaseStorage { if (!storage) storage = getStorage(getFirebaseApp()); return storage; }
 /** Google Analytics runs only in supported browsers and only when a measurementId is set. */
 export async function initAnalytics() {
   if (typeof window === "undefined" || !isFirebaseConfigured || !firebaseConfig.measurementId) return null;

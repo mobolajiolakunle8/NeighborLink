@@ -10,21 +10,34 @@ import { useSite } from "@/context/SiteContext";
 import { getDb } from "@/lib/firebase";
 import { useLiveList } from "@/lib/hooks";
 import type { Announcement, Business, HelpPost } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
+import { formatDate, sortByTimestampDesc } from "@/lib/utils";
 import BusinessCard from "@/components/BusinessCard";
+import SetupNotice from "@/components/SetupNotice";
 import { Alert, CardSkeleton, EmptyState, SectionHeader } from "@/components/ui";
 
 export default function HomePage() {
-  const { settings, activeCategories, activeNeighbourhoods, categoryName, neighbourhoodName, usingDefaults, error } = useSite();
+  const { settings, activeCategories, activeNeighbourhoods, categoryName, neighbourhoodName, problem } = useSite();
 
-  const businesses = useLiveList<Business>("home-biz", () =>
-    query(collection(getDb(), "businesses"), where("status", "==", "approved"), orderBy("createdAt", "desc"), limit(40)),
+  // Each query that needs a composite index also provides an index-free fallback,
+  // so the homepage works even while Firestore indexes are still being built.
+  const businesses = useLiveList<Business>(
+    "home-biz",
+    () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), orderBy("createdAt", "desc"), limit(40)),
+    {
+      fallback: () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), limit(40)),
+      sort: (rows) => sortByTimestampDesc(rows, "createdAt"),
+    },
   );
   const help = useLiveList<HelpPost>("home-help", () =>
     query(collection(getDb(), "helpPosts"), orderBy("createdAt", "desc"), limit(40)),
   );
-  const announcements = useLiveList<Announcement>("home-ann", () =>
-    query(collection(getDb(), "announcements"), where("isPublished", "==", true), orderBy("publishedAt", "desc"), limit(3)),
+  const announcements = useLiveList<Announcement>(
+    "home-ann",
+    () => query(collection(getDb(), "announcements"), where("isPublished", "==", true), orderBy("publishedAt", "desc"), limit(3)),
+    {
+      fallback: () => query(collection(getDb(), "announcements"), where("isPublished", "==", true), limit(3)),
+      sort: (rows) => sortByTimestampDesc(rows, "publishedAt"),
+    },
   );
 
   const featured = useMemo(
@@ -92,13 +105,9 @@ export default function HomePage() {
         </div>
       </section>
 
-      {(usingDefaults || error) && (
-        <div className="mx-auto mt-6 max-w-7xl px-4 sm:px-6">
-          <Alert kind={error ? "error" : "info"}>
-            {error ?? "Showing built-in categories and neighbourhoods. An administrator can save and edit them from the dashboard."}
-          </Alert>
-        </div>
-      )}
+      {problem ? (
+        <SetupNotice problem={problem} className="mx-auto mt-6 max-w-7xl px-4 sm:px-6" />
+      ) : null}
 
       {/* CATEGORIES */}
       <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6" aria-labelledby="cats-title">
@@ -133,8 +142,8 @@ export default function HomePage() {
           <div className="mt-8">
             {businesses.loading ? (
               <CardSkeleton count={3} />
-            ) : businesses.error ? (
-              <Alert kind="error">{businesses.error}</Alert>
+            ) : businesses.problem && !problem ? (
+              <SetupNotice problem={businesses.problem} />
             ) : featured.length === 0 ? (
               <EmptyState
                 icon={Store}

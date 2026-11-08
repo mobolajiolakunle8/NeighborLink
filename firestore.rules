@@ -1,78 +1,63 @@
 rules_version = '2';
 // NeighbourLink — Cloud Firestore security rules.
 // Principles: deny by default · roles live only in users/{uid}.role and can only be
-// changed by an admin · list queries must be provably safe (e.g. status == 'approved').
+// changed by an admin or claimed with the authorized Admin Setup Key.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // ---------- helpers ----------
-    function signedIn() {
-      return request.auth != null;
-    }
-    function me() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-    function isAdmin() {
-      return signedIn() && me().role == 'admin';
-    }
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return signedIn() && me().role == 'admin'; }
     // Suspended accounts can read public content but cannot write anything.
-    function active() {
-      return signedIn() && me().isSuspended != true;
+    function active() { return signedIn() && me().isSuspended != true; }
+
+    function validAdminKey(d) {
+      return d.get('adminSetupKey', '') == 'NEIGHBOURLINK_ADMIN_2026';
     }
 
     // ---------- users (private profiles) ----------
     match /users/{uid} {
       allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
 
-      // Self-registration: may only create a resident or business profile, never admin.
+      // Self-registration: resident or business by default; admin allowed with valid setup passkey
       allow create: if signedIn() && request.auth.uid == uid
-        && request.resource.data.role in ['resident', 'business']
+        && (
+          request.resource.data.role in ['resident', 'business']
+          || (request.resource.data.role == 'admin' && validAdminKey(request.resource.data))
+        )
         && request.resource.data.isSuspended == false
         && request.resource.data.keys().hasOnly([
-          'uid', 'name', 'email', 'role', 'phone', 'neighbourhood', 'avatarUrl',
-          'bio', 'isSuspended', 'fcmTokens', 'createdAt', 'updatedAt'
+          'uid','name','email','role','adminSetupKey','phone','neighbourhood','avatarUrl',
+          'bio','isSuspended','fcmTokens','createdAt','updatedAt'
         ]);
 
-      // Owners may edit their own profile but can NEVER change role to admin,
-      // suspension status, email, uid or createdAt.
+      // Profile updates:
+      // Admin can update any profile.
+      // Owner can update their own profile; can activate admin role only with valid setup passkey.
       allow update: if isAdmin() || (
         signedIn() && request.auth.uid == uid
-        && !request.resource.data.diff(resource.data).affectedKeys()
-              .hasAny(['isSuspended', 'email', 'uid', 'createdAt'])
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isSuspended','email','uid','createdAt'])
+        && (
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
             || request.resource.data.role in ['resident', 'business'])
+          || (request.resource.data.role == 'admin' && validAdminKey(request.resource.data))
+        )
       );
 
       allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
-    // ---------- site configuration (admin-managed, publicly readable) ----------
-    match /siteSettings/{docId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-    match /categories/{docId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-    match /neighbourhoods/{docId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-    match /legalPages/{docId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
+    // ---------- site configuration ----------
+    match /siteSettings/{docId} { allow read: if true; allow write: if isAdmin(); }
+    match /categories/{docId} { allow read: if true; allow write: if isAdmin(); }
+    match /neighbourhoods/{docId} { allow read: if true; allow write: if isAdmin(); }
+    match /legalPages/{docId} { allow read: if true; allow write: if isAdmin(); }
 
     // ---------- business listings ----------
     match /businesses/{bizId} {
-      // Public sees approved listings only; owners and admins see their own / all.
-      allow read: if resource.data.status == 'approved'
-        || isAdmin()
-        || (signedIn() && resource.data.ownerId == request.auth.uid);
-
-      // New listings always start as 'pending', unfeatured, with zero views.
+      allow read: if resource.data.status == 'approved' || isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
       allow create: if active()
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.status == 'pending'
@@ -82,21 +67,15 @@ service cloud.firestore {
         && request.resource.data.name.size() >= 3 && request.resource.data.name.size() <= 180
         && request.resource.data.description is string
         && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 4000;
-
       allow update: if isAdmin()
-        // Owner edits: content only. Any edit sends the listing back to 'pending' review,
-        // so owners can never self-approve or self-feature.
-        || (active()
-            && resource.data.ownerId == request.auth.uid
+        || (active() && resource.data.ownerId == request.auth.uid
             && request.resource.data.ownerId == resource.data.ownerId
             && request.resource.data.status == 'pending'
             && request.resource.data.isFeatured == resource.data.isFeatured
             && request.resource.data.views == resource.data.views)
-        // Anyone may increment the view counter by exactly 1 on an approved listing.
         || (resource.data.status == 'approved'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views'])
             && request.resource.data.views == resource.data.views + 1);
-
       allow delete: if isAdmin() || (active() && resource.data.ownerId == request.auth.uid);
     }
 
@@ -109,7 +88,6 @@ service cloud.firestore {
         && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
         && request.resource.data.comment is string
         && request.resource.data.comment.size() >= 3 && request.resource.data.comment.size() <= 1500
-        // Only approved businesses can be reviewed.
         && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.status == 'approved';
       allow update: if false;
       allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
@@ -120,44 +98,32 @@ service cloud.firestore {
       allow read: if true;
       allow create: if active()
         && request.resource.data.userId == request.auth.uid
-        && request.resource.data.type in ['request', 'offer']
+        && request.resource.data.type in ['request','offer']
         && request.resource.data.status == 'open'
         && request.resource.data.title is string
         && request.resource.data.title.size() >= 5 && request.resource.data.title.size() <= 200
         && request.resource.data.description is string
         && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 3000;
       allow update: if isAdmin()
-        || (active()
-            && resource.data.userId == request.auth.uid
+        || (active() && resource.data.userId == request.auth.uid
             && request.resource.data.userId == resource.data.userId
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'title', 'description', 'contactPhone', 'category', 'neighbourhoodId', 'updatedAt'
-            ]));
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','title','description','contactPhone','category','neighbourhoodId','updatedAt']));
       allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
 
-    // ---------- announcements (published content, admin-authored) ----------
     match /announcements/{annId} {
       allow read: if resource.data.isPublished == true || isAdmin();
       allow create, update, delete: if isAdmin();
     }
-
-    // ---------- moderation ----------
     match /reports/{reportId} {
-      allow create: if active()
-        && request.resource.data.reporterId == request.auth.uid
-        && request.resource.data.status == 'open';
+      allow create: if active() && request.resource.data.reporterId == request.auth.uid && request.resource.data.status == 'open';
       allow read, update, delete: if isAdmin();
     }
-
-    // ---------- audit trail ----------
     match /activityLogs/{logId} {
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
       allow read: if isAdmin();
       allow update, delete: if false;
     }
-
-    // ---------- contact form (public, validated) ----------
     match /contactMessages/{msgId} {
       allow create: if request.resource.data.name is string
         && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 120
@@ -168,7 +134,6 @@ service cloud.firestore {
         && request.resource.data.status == 'new';
       allow read, update, delete: if isAdmin();
     }
-
     // Everything not matched above is denied by default.
   }
 }

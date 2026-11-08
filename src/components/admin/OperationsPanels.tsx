@@ -343,7 +343,7 @@ export function MessagesPanel() {
             <p className="mt-2 whitespace-pre-line text-sm text-forest/85">{m.message}</p>
             <p className="mt-2 text-xs text-[#8A9A8F]">From {m.name} • {m.email}{m.phone ? ` • ${m.phone}` : ""} • {formatDateTime(m.createdAt)}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <a href={`mailto:${m.email}?subject=${encodeURIComponent(`Re: ${m.subject}`)}`} className="btn-ghost border border-line !px-3 !py-1.5 text-xs"><Mail size={13} aria-hidden /> Reply by email</a>
+              <a href={`mailto:${encodeURIComponent(m.email)}?subject=${encodeURIComponent(`Re: ${m.subject}`)}`} className="btn-ghost border border-line !px-3 !py-1.5 text-xs"><Mail size={13} aria-hidden /> Reply by email</a>
               {m.status === "new" && <button type="button" className="btn-ghost border border-line !px-3 !py-1.5 text-xs" onClick={async () => { try { await setMessageStatus(m.id, "read", uid); } catch (err) { show("error", friendlyError(err)); } }}>Mark read</button>}
               {m.status !== "replied" && <button type="button" className="btn-ghost border border-line !px-3 !py-1.5 text-xs" onClick={async () => { try { await setMessageStatus(m.id, "replied", uid); show("success", "Marked as replied."); } catch (err) { show("error", friendlyError(err)); } }}>Mark replied</button>}
               <button type="button" aria-label="Delete message" className="btn-ghost border border-danger-line !px-3 !py-1.5 text-xs text-danger" onClick={async () => {

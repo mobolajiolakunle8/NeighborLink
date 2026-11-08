@@ -7,15 +7,21 @@ import { Megaphone, Pin } from "lucide-react";
 import { getDb } from "@/lib/firebase";
 import { useLiveList } from "@/lib/hooks";
 import type { Announcement } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
-import { CardSkeleton, EmptyState, Alert } from "@/components/ui";
+import { formatDate, sortByTimestampDesc } from "@/lib/utils";
+import SetupNotice from "@/components/SetupNotice";
+import { CardSkeleton, EmptyState } from "@/components/ui";
 
 const PAGE = 12;
 
 export default function AnnouncementsPage() {
   const [count, setCount] = useState(PAGE);
-  const anns = useLiveList<Announcement>(`announcements-${count}`, () =>
-    query(collection(getDb(), "announcements"), where("isPublished", "==", true), orderBy("publishedAt", "desc"), limit(count)),
+  const anns = useLiveList<Announcement>(
+    `announcements-${count}`,
+    () => query(collection(getDb(), "announcements"), where("isPublished", "==", true), orderBy("publishedAt", "desc"), limit(count)),
+    {
+      fallback: () => query(collection(getDb(), "announcements"), where("isPublished", "==", true), limit(count)),
+      sort: (rows) => sortByTimestampDesc(rows, "publishedAt"),
+    },
   );
 
   const ordered = useMemo(
@@ -31,8 +37,8 @@ export default function AnnouncementsPage() {
       <p className="mt-2 text-muted">Official updates from the NeighbourLink team for Ibadan residents.</p>
 
       <div className="mt-8">
-        {anns.error ? (
-          <Alert kind="error">{anns.error}</Alert>
+        {anns.problem ? (
+          <SetupNotice problem={anns.problem} />
         ) : anns.loading ? (
           <div className="space-y-4"><div className="skeleton h-40" /><div className="skeleton h-40" /></div>
         ) : ordered.length === 0 ? (

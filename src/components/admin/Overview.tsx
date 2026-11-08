@@ -15,7 +15,7 @@ import { formatDateTime, friendlyError } from "@/lib/utils";
 import { Alert, CardSkeleton, Spinner } from "@/components/ui";
 
 export default function Overview() {
-  const { usingDefaults } = useSite();
+  const { usingDefaults, problem } = useSite();
   const { firebaseUser } = useAuth();
   const { notice, show } = useNotice();
   const logs = useLiveList<ActivityLog>("admin-logs-recent", () =>
@@ -63,9 +63,14 @@ export default function Overview() {
   return (
     <div className="space-y-6">
       {notice && <Alert kind={notice.kind}>{notice.text}</Alert>}
-      {error && <Alert kind="error">{error}</Alert>}
+      {problem?.setupRequired && (
+        <Alert kind="warning">
+          Live data is temporarily unavailable. Please contact your site administrator.
+        </Alert>
+      )}
+      {error && !problem && <Alert kind="error">{error}</Alert>}
 
-      {usingDefaults && (
+      {usingDefaults && !problem && (
         <div className="card flex flex-col gap-4 border-gold/60 bg-gold-soft p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="flex items-center gap-2 font-extrabold text-[#7A5A1E]"><Database size={18} aria-hidden /> Initialise editable content</p>

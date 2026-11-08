@@ -26,11 +26,7 @@ export interface UserProfile {
   createdAt?: unknown;
 }
 
-export interface NavLink {
-  label: string;
-  href: string;
-  enabled: boolean;
-}
+export interface NavLink { label: string; href: string; enabled: boolean; }
 
 /** siteSettings/main — every value here is editable from the admin dashboard. */
 export interface SiteSettings {
@@ -59,24 +55,8 @@ export interface SiteSettings {
   navLinks: NavLink[];
 }
 
-export interface Category {
-  id: string;
-  name: string;
-  slug: string;
-  description: string;
-  icon: string;
-  sortOrder: number;
-  isActive: boolean;
-}
-
-export interface Neighbourhood {
-  id: string;
-  name: string;
-  slug: string;
-  description: string;
-  sortOrder: number;
-  isActive: boolean;
-}
+export interface Category { id: string; name: string; slug: string; description: string; icon: string; sortOrder: number; isActive: boolean; }
+export interface Neighbourhood { id: string; name: string; slug: string; description: string; sortOrder: number; isActive: boolean; }
 
 /** businesses/{id} */
 export interface Business {
@@ -100,75 +80,11 @@ export interface Business {
   updatedAt?: unknown;
 }
 
-export interface Review {
-  id: string;
-  businessId: string;
-  userId: string;
-  authorName: string;
-  rating: number;
-  comment: string;
-  createdAt?: unknown;
-}
-
-export interface HelpPost {
-  id: string;
-  userId: string;
-  authorName: string;
-  type: HelpType;
-  title: string;
-  description: string;
-  category: string;
-  neighbourhoodId: string | null;
-  status: HelpStatus;
-  contactPhone: string | null;
-  createdAt?: unknown;
-  updatedAt?: unknown;
-}
-
-export interface Announcement {
-  id: string;
-  title: string;
-  body: string;
-  imageUrl: string | null;
-  isPublished: boolean;
-  isPinned: boolean;
-  publishedAt?: unknown;
-}
-
-export interface Report {
-  id: string;
-  reporterId: string;
-  targetType: ReportTargetType;
-  targetId: string;
-  reason: string;
-  details: string | null;
-  status: ReportStatus;
-  createdAt?: unknown;
-}
-
-export interface ActivityLog {
-  id: string;
-  userId: string | null;
-  action: string;
-  details: string;
-  createdAt?: unknown;
-}
-
-export interface ContactMessage {
-  id: string;
-  name: string;
-  email: string;
-  phone: string | null;
-  subject: string;
-  message: string;
-  status: MessageStatus;
-  createdAt?: unknown;
-}
-
+export interface Review { id: string; businessId: string; userId: string; authorName: string; rating: number; comment: string; createdAt?: unknown; }
+export interface HelpPost { id: string; userId: string; authorName: string; type: HelpType; title: string; description: string; category: string; neighbourhoodId: string | null; status: HelpStatus; contactPhone: string | null; createdAt?: unknown; updatedAt?: unknown; }
+export interface Announcement { id: string; title: string; body: string; imageUrl: string | null; isPublished: boolean; isPinned: boolean; publishedAt?: unknown; }
+export interface Report { id: string; reporterId: string; targetType: ReportTargetType; targetId: string; reason: string; details: string | null; status: ReportStatus; createdAt?: unknown; }
+export interface ActivityLog { id: string; userId: string | null; action: string; details: string; createdAt?: unknown; }
+export interface ContactMessage { id: string; name: string; email: string; phone: string | null; subject: string; message: string; status: MessageStatus; createdAt?: unknown; }
 /** legalPages/{"privacy" | "terms"} */
-export interface LegalPage {
-  id: string;
-  title: string;
-  content: string;
-  updatedAt?: unknown;
-}
+export interface LegalPage { id: string; title: string; content: string; updatedAt?: unknown; }

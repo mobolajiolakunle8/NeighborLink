@@ -1,14 +1,7 @@
 // Pure helpers shared by client and server code. No Firebase imports here.
 
 export function slugify(input: string): string {
-  return (
-    input
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80) || "item"
-  );
+  return input.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "item";
 }
 
 /** Converts a Firestore Timestamp, Date, millisecond number or null into a Date. */
@@ -16,12 +9,7 @@ export function toDate(value: unknown): Date | null {
   if (!value) return null;
   if (value instanceof Date) return value;
   if (typeof value === "number") return new Date(value);
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    "toDate" in value &&
-    typeof (value as { toDate: unknown }).toDate === "function"
-  ) {
+  if (typeof value === "object" && value !== null && "toDate" in value && typeof (value as { toDate: unknown }).toDate === "function") {
     return (value as { toDate: () => Date }).toDate();
   }
   return null;
@@ -31,37 +19,21 @@ export function formatDate(value: unknown, options: Intl.DateTimeFormatOptions =
   const d = toDate(value);
   return d ? d.toLocaleDateString("en-NG", options) : "—";
 }
-
 export function formatDateTime(value: unknown): string {
   const d = toDate(value);
   return d ? d.toLocaleString("en-NG", { dateStyle: "medium", timeStyle: "short" }) : "—";
 }
-
-export function isEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-export function isPhone(value: string): boolean {
-  return /^\+?[0-9\s-]{7,20}$/.test(value.trim());
-}
-
+export function isEmail(value: string): boolean { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()); }
+export function isPhone(value: string): boolean { return /^\+?[0-9\s-]{7,20}$/.test(value.trim()); }
 export function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value.trim());
-    return url.protocol === "https:" || url.protocol === "http:";
-  } catch {
-    return false;
-  }
+  try { const url = new URL(value.trim()); return url.protocol === "https:" || url.protocol === "http:"; }
+  catch { return false; }
 }
-
 /** Accepts only 6-digit hex colours, so admin input can never inject CSS. */
-export function safeHex(value: string | undefined, fallback: string): string {
-  return value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
-}
+export function safeHex(value: string | undefined, fallback: string): string { return value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback; }
 
 export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
 /** Client-side image validation. Storage rules enforce the same limits server-side. */
 export function validateImageFile(file: File): string | null {
   if (!IMAGE_TYPES.includes(file.type)) return "Please upload a JPG, PNG, WEBP or GIF image.";
@@ -90,13 +62,58 @@ const ERROR_MESSAGES: Record<string, string> = {
   "storage/retry-limit-exceeded": "Upload timed out. Please try a smaller image.",
 };
 
+export type FirestoreProblemKind = "rules-not-deployed" | "api-disabled" | "database-missing" | "index-missing" | "offline" | "permission" | "not-configured" | "unknown";
+export interface FirestoreProblem {
+  kind: FirestoreProblemKind;
+  /** Short, visitor-safe explanation. */
+  message: string;
+  /** Console link to create a missing index, when Firestore provides one. */
+  indexUrl?: string;
+  /** True when the site owner must finish Firebase setup (not a user mistake). */
+  setupRequired: boolean;
+}
+
+function errorCode(err: unknown): string {
+  return typeof err === "object" && err !== null && "code" in err ? String((err as { code: unknown }).code) : "";
+}
+function errorText(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "";
+}
+
+/** Explains why Firestore refused a read. The message text distinguishes setup problems. */
+export function classifyFirestoreError(err: unknown): FirestoreProblem {
+  const code = errorCode(err);
+  const text = errorText(err);
+  const lower = text.toLowerCase();
+
+  if (code === "not-configured") return { kind: "not-configured", setupRequired: true, message: "Firebase configuration is missing from this deployment." };
+  if (lower.includes("has not been used in project") || lower.includes("it is disabled") || lower.includes("service_disabled")) return { kind: "api-disabled", setupRequired: true, message: "Cloud Firestore hasn't been enabled for this Firebase project yet." };
+  if (code === "not-found" && lower.includes("does not exist")) return { kind: "database-missing", setupRequired: true, message: "The Firestore database hasn't been created for this Firebase project yet." };
+  if (code === "permission-denied" && lower.includes("missing or insufficient permissions")) return { kind: "rules-not-deployed", setupRequired: true, message: "Live content is unavailable because the Firestore security rules for this project haven't been published yet." };
+  if (code === "failed-precondition" && lower.includes("index")) {
+    const match = text.match(/https:\/\/console\.firebase\.google\.com\S+/);
+    return { kind: "index-missing", setupRequired: true, indexUrl: match?.[0], message: "This list needs a Firestore index that is still being created." };
+  }
+  if (code === "unavailable" || code === "auth/network-request-failed") return { kind: "offline", setupRequired: false, message: ERROR_MESSAGES.unavailable };
+  if (code === "permission-denied") return { kind: "permission", setupRequired: false, message: ERROR_MESSAGES["permission-denied"] };
+  return { kind: "unknown", setupRequired: false, message: friendlyError(err) };
+}
+
+/** Sorts newest first by a Firestore timestamp field, for client-side fallbacks. */
+export function sortByTimestampDesc<T>(items: T[], field: keyof T): T[] {
+  return [...items].sort((a, b) => (toDate(b[field])?.getTime() ?? 0) - (toDate(a[field])?.getTime() ?? 0));
+}
+
 /** Maps Firebase and application errors to a message that is safe to show users. */
 export function friendlyError(err: unknown): string {
-  const code =
-    typeof err === "object" && err !== null && "code" in err ? String((err as { code: unknown }).code) : "";
+  const code = errorCode(err);
+  const text = errorText(err).toLowerCase();
+  if (code === "permission-denied" && (text.includes("has not been used") || text.includes("it is disabled"))) return "Cloud Firestore hasn't been enabled for this Firebase project yet.";
+  if (code === "permission-denied" && text.includes("missing or insufficient permissions")) return "Live content is unavailable until the site's Firestore security rules are published.";
+  if (code === "not-found" && text.includes("does not exist")) return "The Firestore database hasn't been created for this project yet.";
+  if (code === "failed-precondition" && text.includes("index")) return "This list needs a Firestore index that is still being created. Please try again in a few minutes.";
   if (code && ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
-  if (err instanceof Error && err.message && !code.startsWith("auth/") && !code.startsWith("storage/")) {
-    return err.message;
-  }
+  if (err instanceof Error && err.message && !code.startsWith("auth/") && !code.startsWith("storage/")) return err.message;
   return "Something went wrong. Please try again.";
 }
