@@ -10,16 +10,19 @@ import { useAuth } from "@/context/AuthContext";
 import { useSite } from "@/context/SiteContext";
 import { getDb } from "@/lib/firebase";
 import { useLiveList, useNotice } from "@/lib/hooks";
-import { deleteBusiness, deleteHelpPost, deleteMyAccount, ensureProfile, setHelpStatus, updateMyProfile, claimAdminAccess, requestVerification } from "@/lib/api";
+import { deleteBusiness, deleteHelpPost, deleteMyAccount, ensureProfile, enableAdminMfaRequirement, setHelpStatus, updateBusinessLocation, updateMyProfile, requestVerification } from "@/lib/api";
+import { beginTotpEnrollment, enrolledFactorCount, finishTotpEnrollment } from "@/lib/admin-mfa";
 import { ShareButton } from "@/components/MemberActions";
 import ProfileMessageBox from "@/components/ProfileMessageBox";
-import { KeyRound } from "lucide-react";
+import { KeyRound, LockKeyhole, ShieldCheck } from "lucide-react";
+import QRCode from "qrcode";
 import { enablePushNotifications, PUSH_CONFIGURED } from "@/lib/messaging";
 import ImageUploadField from "@/components/ImageUploadField";
 import BusinessForm from "@/components/BusinessForm";
+import BusinessLocationFields, { validCoordinatePair } from "@/components/BusinessLocationFields";
 import { Alert, EmptyState, Field, Spinner, StatusBadge } from "@/components/ui";
 import type { Business, HelpPost, Review, Role, UserProfile } from "@/lib/types";
-import { friendlyError, isPhone, sortByTimestampDesc } from "@/lib/utils";
+import { friendlyError, hasBusinessLocation, isPhone, sortByTimestampDesc } from "@/lib/utils";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -36,7 +39,7 @@ export default function ProfilePage() {
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           <ProfileForm profile={profile} />
-          <AdminActivationCard />
+          <AdminSecurityCard />
         </div>
         <div className="space-y-6"><MyListings uid={firebaseUser.uid} ownerName={profile.name} /><MyPosts uid={firebaseUser.uid} /><PushCard uid={firebaseUser.uid} /><DangerZone /></div>
       </div>
@@ -67,6 +70,34 @@ function ProfileForm({ profile }: { profile: UserProfile }) {
   return <form onSubmit={onSubmit} noValidate className="card space-y-4 p-6" aria-label="Edit profile"><h2 className="flex items-center gap-2 text-xl font-extrabold"><Pencil size={18} aria-hidden /> Your details</h2><Field label="Full name *"><input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></Field><div className="grid gap-4 sm:grid-cols-2"><Field label="Phone"><input className="input" inputMode="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="+234…" /></Field><Field label="Neighbourhood"><select className="input" value={form.neighbourhood} onChange={e => setForm({ ...form, neighbourhood: e.target.value })}><option value="">Select…</option>{activeNeighbourhoods.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></Field></div><Field label="Bio"><textarea className="input" rows={3} maxLength={400} value={form.bio} onChange={e => setForm({ ...form, bio: e.target.value })} placeholder="A little about you…" /></Field><ImageUploadField label="Profile photo" value={form.avatarUrl} onChange={url => setForm({ ...form, avatarUrl: url })} folder={`avatars/${profile.uid}`} variant="square" />{profile.role !== "admin" && <Field label="Account type" hint="Business owners can list businesses. Admin rights are granted only by administrators."><select className="input" value={form.role} onChange={e => setForm({ ...form, role: e.target.value as Role })}><option value="resident">Resident</option><option value="business">Business owner</option></select></Field>}{notice && <Alert kind={notice.kind}>{notice.text}</Alert>}<button type="submit" disabled={busy} className="btn-primary">{busy ? <><Spinner /> Saving…</> : "Save profile"}</button></form>;
 }
 
+function ListingLocationEditor({ b, uid }: { b: Business; uid: string }) {
+  const [open, setOpen] = useState(!hasBusinessLocation(b));
+  const [latitude, setLatitude] = useState(b.latitude != null ? String(b.latitude) : "");
+  const [longitude, setLongitude] = useState(b.longitude != null ? String(b.longitude) : "");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const located = hasBusinessLocation(b);
+  return (
+    <div className={`rounded-xl border p-3 ${located ? "border-line bg-sage/50" : "border-[#EAD9AE] bg-gold-soft"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-extrabold">{located ? `On the map: ${b.latitude!.toFixed(6)}, ${b.longitude!.toFixed(6)}` : "Not on the map yet — add the exact pin"}</p>
+        <button type="button" className="btn-ghost border border-line !px-3 !py-1.5 text-xs" onClick={() => setOpen(o => !o)}>{located ? "Edit pin" : "Add map pin"}</button>
+      </div>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <BusinessLocationFields latitude={latitude} longitude={longitude} onChange={(lat, lng) => { setLatitude(lat); setLongitude(lng); }} searchQuery={`${b.name} ${b.address ?? ""}`} />
+          {msg && <Alert kind={msg.kind}>{msg.text}</Alert>}
+          <button type="button" disabled={busy || !latitude.trim() || !longitude.trim() || !validCoordinatePair(latitude, longitude)} className="btn-primary !py-2 text-sm" onClick={async () => {
+            setBusy(true); setMsg(null);
+            try { await updateBusinessLocation(b.id, Number(latitude), Number(longitude), uid); setMsg({ kind: "success", text: b.status === "approved" ? "Map pin saved. Your business is now tagged at this exact location." : "Map pin saved. It will appear publicly when the listing is approved." }); }
+            catch (err) { setMsg({ kind: "error", text: friendlyError(err) }); } finally { setBusy(false); }
+          }}>{busy ? <Spinner /> : null}Save exact location</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ListingInsights({ b, uid }: { b: Business; uid: string }) {
   const reviews = useLiveList<Review>(`ins-rev-${b.id}`, () => query(collection(getDb(), "reviews"), where("businessId", "==", b.id), limit(200)));
   const avg = reviews.data.length ? reviews.data.reduce((n, r) => n + r.rating, 0) / reviews.data.length : 0;
@@ -84,6 +115,7 @@ function ListingInsights({ b, uid }: { b: Business; uid: string }) {
   return (
     <div className="mt-3 space-y-3 border-t border-line pt-3">
       <div className="grid grid-cols-3 gap-2 text-center">{stats.map(st => <div key={st.label} className="rounded-xl bg-sage/60 p-2"><p className="text-lg font-extrabold">{st.value}</p><p className="text-[10px] font-bold uppercase tracking-wide text-muted">{st.label}</p></div>)}</div>
+      <ListingLocationEditor key={`${b.id}-${b.latitude ?? "none"}-${b.longitude ?? "none"}`} b={b} uid={uid} />
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {b.status === "pending" && <span className="badge badge-gold">Waiting for review</span>}
         {b.status === "rejected" && <span className="badge badge-red">Not approved — edit and resubmit</span>}
@@ -158,78 +190,77 @@ function PushCard({ uid }: { uid: string }) {
   return <section className="card p-6" aria-labelledby="push-title"><h2 id="push-title" className="flex items-center gap-2 text-xl font-extrabold"><Bell size={18} aria-hidden /> Notifications</h2><p className="mt-2 text-sm text-muted">Get a push alert for important neighbourhood announcements. You can turn this off in your browser settings at any time.</p><div className="mt-4 flex flex-wrap items-center gap-3"><button type="button" disabled={busy || !PUSH_CONFIGURED || permission === "granted" || permission === "denied"} className="btn-outline !py-2 text-sm" onClick={async () => { setBusy(true); try { await enablePushNotifications(uid); setPermission("granted"); show("success", "Notifications enabled on this device."); } catch (err) { show("error", friendlyError(err)); } finally { setBusy(false); } }}>{permission === "granted" ? <><CheckCircle2 size={15} aria-hidden /> Enabled</> : "Enable notifications"}</button>{permission === "denied" && <span className="text-xs font-bold text-danger">Blocked in browser settings.</span>}{!PUSH_CONFIGURED && <span className="text-xs font-bold text-muted">Available once a web push key is configured.</span>}</div>{notice && <div className="mt-3"><Alert kind={notice.kind}>{notice.text}</Alert></div>}</section>;
 }
 
-function AdminActivationCard() {
-  const { firebaseUser, profile } = useAuth();
-  const [open, setOpen] = useState(false);
-  const [setupKey, setSetupKey] = useState("");
+type TotpSetup = { secretKey: string; qrUri: string; qrDataUrl: string };
+
+function AdminSecurityCard() {
+  const { firebaseUser, profile, adminMfaRequired, mfaVerified, emailVerified } = useAuth();
+  const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  if (profile?.role !== "admin" || !firebaseUser) return null;
+  const factors = enrolledFactorCount(firebaseUser);
 
-  if (profile?.role === "admin") return null;
+  async function run(fn: () => Promise<void>, ok: string) {
+    setBusy(true); setError(null); setSuccess(null);
+    try { await fn(); setSuccess(ok); } catch (err) { setError(friendlyError(err)); } finally { setBusy(false); }
+  }
 
-  async function handleActivate(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!firebaseUser) return;
-    setBusy(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await claimAdminAccess(setupKey, firebaseUser, profile?.name);
-      setSuccess("Administrator privileges activated! Refreshing…");
-      setOpen(false);
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setBusy(false);
-    }
+  async function startSetup() {
+    await run(async () => {
+      const s = await beginTotpEnrollment(firebaseUser!, password);
+      const qrDataUrl = await QRCode.toDataURL(s.qrUri, { margin: 1, width: 220 });
+      setSetup({ ...s, qrDataUrl });
+      setPassword("");
+    }, "Scan the QR code, then enter the 6-digit code to finish.");
   }
 
   return (
-    <div className="card p-5 border border-gold/40 bg-gold-soft/30">
-      {!open ? (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="flex items-center gap-2 text-xs font-bold text-forest">
-            <KeyRound size={15} className="text-gold" /> Site Owner? Have an Admin Setup Key?
-          </p>
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="text-xs font-extrabold text-forest underline cursor-pointer"
-          >
-            Activate Admin Access
-          </button>
-        </div>
-      ) : (
-        <form onSubmit={handleActivate} className="space-y-3">
-          <p className="flex items-center gap-1.5 text-xs font-bold text-forest">
-            <KeyRound size={15} /> Enter Admin Setup Key to upgrade this account to Admin:
-          </p>
-          <input
-            type="text"
-            className="input font-mono text-sm !py-1.5"
-            value={setupKey}
-            onChange={(e) => setSetupKey(e.target.value)}
-            placeholder="NL-…" autoComplete="off" spellCheck={false}
-            required
-          />
-          {error && <p className="text-xs font-bold text-danger">{error}</p>}
-          {success && <p className="text-xs font-bold text-[#1F5C3D]">{success}</p>}
-          <div className="flex gap-2">
-            <button type="submit" disabled={busy} className="btn-primary !py-1.5 !px-3 text-xs">
-              {busy ? "Activating…" : "Activate Admin"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="btn-ghost border border-line !py-1.5 !px-3 text-xs"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
+    <section className="card border-2 border-gold/40 bg-gold-soft/30 p-6" aria-labelledby="admin-security-title">
+      <h2 id="admin-security-title" className="flex items-center gap-2 text-xl font-extrabold"><LockKeyhole size={20} aria-hidden /> Administrator security</h2>
+      <p className="mt-2 text-sm leading-relaxed text-muted">Admin accounts require a verified email and an authenticator-app second factor before privileged changes are accepted.</p>
+      <div className="mt-4 grid gap-2 text-sm">
+        <p className="flex items-center gap-2"><ShieldCheck size={16} aria-hidden /> Email: <strong>{emailVerified ? "verified" : "not verified"}</strong></p>
+        <p className="flex items-center gap-2"><KeyRound size={16} aria-hidden /> Authenticator factors: <strong>{factors}</strong></p>
+        <p className="flex items-center gap-2"><LockKeyhole size={16} aria-hidden /> MFA this session: <strong>{mfaVerified ? "verified" : "not verified"}</strong></p>
+        <p className="flex items-center gap-2">Site-wide enforcement: <strong>{adminMfaRequired ? "enabled" : "not enabled"}</strong></p>
+      </div>
+
+      {!emailVerified && (
+        <button type="button" disabled={busy} className="btn-outline mt-4 !py-2 text-sm" onClick={() => run(async () => { await sendEmailVerification(firebaseUser!); }, "Verification email sent.")}>Send verification email</button>
       )}
-    </div>
+
+      {emailVerified && !mfaVerified && (
+        <div className="mt-4 space-y-3 rounded-2xl border border-line bg-white p-4">
+          <p className="text-sm font-extrabold">Set up authenticator-app MFA</p>
+          {!setup ? (
+            <div className="space-y-2">
+              <Field label="Current password (for re-authentication)"><input type="password" className="input" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></Field>
+              <button type="button" disabled={busy || !password} className="btn-primary !py-2 text-sm" onClick={startSetup}>Generate authenticator secret</button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {setup.qrDataUrl && <img src={setup.qrDataUrl} alt="Authenticator QR code" className="h-44 w-44 rounded-xl bg-white p-2" />}
+              <p className="break-all rounded-xl bg-sage p-3 font-mono text-xs"><strong>Manual key:</strong> {setup.secretKey}</p>
+              <Field label="6-digit code from authenticator app"><input className="input font-mono" inputMode="numeric" maxLength={6} value={otp} onChange={e => setOtp(e.target.value)} /></Field>
+              <button type="button" disabled={busy || otp.trim().length !== 6} className="btn-primary !py-2 text-sm" onClick={() => run(async () => {
+                await finishTotpEnrollment(firebaseUser!, otp);
+                setSetup(null); setOtp("");
+              }, "MFA enrolled. Sign out and sign in again to complete the challenge.")}>Verify & enable MFA</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {mfaVerified && !adminMfaRequired && (
+        <button type="button" disabled={busy} className="btn-primary mt-4 !py-2 text-sm" onClick={() => run(async () => { await enableAdminMfaRequirement(firebaseUser!.uid); }, "MFA is now required for all administrator changes.")}>Require MFA for all admins</button>
+      )}
+      {adminMfaRequired && !mfaVerified && <div className="mt-4"><Alert kind="warning">Sign out and sign back in with your authenticator code to unlock admin changes.</Alert></div>}
+      {error && <div className="mt-4"><Alert kind="error">{error}</Alert></div>}
+      {success && <div className="mt-4"><Alert kind="success">{success}</Alert></div>}
+    </section>
   );
 }
 

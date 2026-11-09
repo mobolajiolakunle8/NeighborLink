@@ -4,15 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   BarChart3, FileText, Flag, HeartHandshake, Mail, Megaphone, MapPin, ScrollText,
-  Settings2, ShieldCheck, Store, Tags, Users, KeyRound, CheckCircle2, MessageCircle,
+  Settings2, ShieldCheck, Store, Tags, Users, MessageCircle, Bot, LockKeyhole,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { Alert, CardSkeleton, EmptyState, Field, Spinner } from "@/components/ui";
-import { claimAdminAccess } from "@/lib/api";
-import { friendlyError } from "@/lib/utils";
+import { Alert, CardSkeleton, EmptyState } from "@/components/ui";
 import Overview from "@/components/admin/Overview";
 import SettingsPanel from "@/components/admin/SettingsPanel";
 import SupportInboxPanel from "@/components/admin/SupportInboxPanel";
+import AiAssistantPanel from "@/components/admin/AiAssistantPanel";
 import AdminMessagesButton from "@/components/admin/AdminMessagesButton";
 import { AnnouncementsPanel, LegalPanel, TaxonomyPanel } from "@/components/admin/ContentPanels";
 import {
@@ -21,7 +20,7 @@ import {
 
 type TabId =
   | "overview" | "settings" | "categories" | "neighbourhoods" | "businesses" | "users"
-  | "announcements" | "help" | "reports" | "messages" | "memberMessages" | "legal" | "logs";
+  | "announcements" | "help" | "reports" | "messages" | "memberMessages" | "assistant" | "legal" | "logs";
 
 const TABS: { id: TabId; label: string; icon: typeof BarChart3; group: "Insights" | "Content" | "Operations" }[] = [
   { id: "overview", label: "Overview", icon: BarChart3, group: "Insights" },
@@ -36,11 +35,12 @@ const TABS: { id: TabId; label: string; icon: typeof BarChart3; group: "Insights
   { id: "help", label: "Help board", icon: HeartHandshake, group: "Operations" },
   { id: "reports", label: "Reports", icon: Flag, group: "Operations" },
   { id: "memberMessages", label: "Member messages", icon: MessageCircle, group: "Operations" },
+  { id: "assistant", label: "AI assistant", icon: Bot, group: "Operations" },
   { id: "messages", label: "Contact form", icon: Mail, group: "Operations" },
 ];
 
 export default function DashboardPage() {
-  const { isAdmin, isSignedIn, loading, profile, firebaseUser } = useAuth();
+  const { isAdmin, isSignedIn, loading, profile, firebaseUser, adminMfaRequired, mfaVerified } = useAuth();
   const [tab, setTab] = useState<TabId>("overview");
   const [threadId, setThreadId] = useState<string | undefined>();
   useEffect(() => {
@@ -50,89 +50,32 @@ export default function DashboardPage() {
     const thread = params.get("thread");
     if (thread && /^support_[A-Za-z0-9_-]+$/.test(thread)) { setThreadId(thread); setTab("memberMessages"); }
   }, []);
-  const [setupKey, setSetupKey] = useState("");
-  const [claiming, setClaiming] = useState(false);
-  const [claimError, setClaimError] = useState<string | null>(null);
-  const [claimSuccess, setClaimSuccess] = useState<string | null>(null);
-
   if (loading) {
     return <div className="mx-auto max-w-7xl px-4 py-10"><CardSkeleton count={2} className="h-24" /></div>;
   }
 
-  async function handleActivateAdmin(e: React.FormEvent) {
-    e.preventDefault();
-    if (!firebaseUser) return;
-    setClaiming(true);
-    setClaimError(null);
-    setClaimSuccess(null);
-    try {
-      await claimAdminAccess(setupKey, firebaseUser, profile?.name);
-      setClaimSuccess("Administrator privileges activated! Loading dashboard…");
-    } catch (err) {
-      setClaimError(friendlyError(err));
-    } finally {
-      setClaiming(false);
-    }
-  }
+  const roleLabel = profile?.role || "resident";
+  const mfaMissing = profile?.role === "admin" && adminMfaRequired && !mfaVerified;
+  const locked = !isAdmin || mfaMissing;
+  const lockedText = !isSignedIn
+    ? "Please log in with an administrator account to continue."
+    : profile?.isSuspended
+      ? "This account has been suspended."
+      : mfaMissing
+        ? "Administrator MFA is required. Sign out, sign in with your authenticator code, or complete MFA setup from your profile."
+        : `You are signed in as ${profile?.name || firebaseUser?.email || "member"} (current role: ${roleLabel}). Administrator access is granted only by an existing administrator or directly in the Firebase Console."`;
 
-  if (!isAdmin) {
+  if (locked) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-16">
         <EmptyState
-          icon={ShieldCheck}
-          title="Administrator access required"
-          text={
-            !isSignedIn
-              ? "Please log in or register an account first, then activate administrator access below."
-              : profile?.isSuspended
-                ? "This account has been suspended."
-                : `You are signed in as ${profile?.name || firebaseUser?.email || "member"} (current role: ${profile?.role || "resident"}). To access this dashboard, activate administrator privileges below.`
-          }
-          action={
-            !isSignedIn ? (
-              <div className="flex flex-wrap justify-center gap-2">
-                <Link href="/login" className="btn-primary">Log in</Link>
-                <Link href="/register" className="btn-outline">Register</Link>
-              </div>
-            ) : null
-          }
+          icon={mfaMissing ? LockKeyhole : ShieldCheck}
+          title={mfaMissing ? "Administrator MFA required" : "Administrator access required"}
+          text={lockedText}
+          action={<div className="flex flex-wrap justify-center gap-2">
+            {!isSignedIn ? <><Link href="/login" className="btn-primary">Log in</Link><Link href="/register" className="btn-outline">Register</Link></> : <Link href="/profile" className="btn-primary">Open my profile</Link>}
+          </div>}
         />
-
-        {isSignedIn && !profile?.isSuspended && (
-          <form onSubmit={handleActivateAdmin} className="card mt-6 p-6 sm:p-8 space-y-4 border-2 border-gold/40 bg-gold-soft/30">
-            <div className="flex items-center gap-2 text-forest">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-gold text-forest shrink-0">
-                <KeyRound size={20} aria-hidden />
-              </span>
-              <div>
-                <h2 className="text-lg font-extrabold leading-tight">Activate Administrator Access</h2>
-                <p className="text-xs text-muted">First-time setup only. Later administrators are added by an existing admin in Dashboard → Users.</p>
-              </div>
-            </div>
-
-            <Field label="Admin Setup Key" hint="The one-time key provided privately to the site owner. It can be used only once to create the first administrator.">
-              <input
-                type="text"
-                value={setupKey}
-                onChange={(e) => setSetupKey(e.target.value)}
-                required
-                className="input font-mono"
-                placeholder="NL-…" autoComplete="off" spellCheck={false}
-              />
-            </Field>
-
-            {claimError && <Alert kind="error">{claimError}</Alert>}
-            {claimSuccess && (
-              <Alert kind="success">
-                <span className="flex items-center gap-1.5"><CheckCircle2 size={16} />{claimSuccess}</span>
-              </Alert>
-            )}
-
-            <button type="submit" disabled={claiming} className="btn-primary w-full">
-              {claiming ? <><Spinner /> Activating Admin…</> : <><KeyRound size={16} /> Activate Admin Privileges</>}
-            </button>
-          </form>
-        )}
       </div>
     );
   }
@@ -196,6 +139,7 @@ export default function DashboardPage() {
           {tab === "help" && <HelpPanel />}
           {tab === "reports" && <ReportsPanel />}
           {tab === "memberMessages" && <SupportInboxPanel initialThreadId={threadId} />}
+          {tab === "assistant" && <AiAssistantPanel />}
           {tab === "messages" && <MessagesPanel />}
           {tab === "logs" && <LogsPanel />}
         </section>

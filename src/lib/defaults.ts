@@ -29,8 +29,6 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   seoDescription:
     "NeighbourLink connects residents in Ibadan with local businesses, community assistance, services and neighbourhood announcements.",
   footerText: "Connecting Ibadan, one neighbourhood at a time.",
-  emergencyDisclaimer:
-    "NeighbourLink is a community platform and is not an emergency service. In an emergency, contact the Nigeria Police (112), FRSC (122), or your nearest hospital immediately.",
   socialLinks: {},
   navLinks: [
     { label: "Home", href: "/", enabled: true },
@@ -131,19 +129,16 @@ Help requests and offers must be genuine. Never post requests for money transfer
 4. Reviews and reports
 Reviews must be honest and based on real experience. We may remove content that is misleading, abusive, discriminatory or unsafe.
 
-5. Emergencies
-NeighbourLink is NOT an emergency service. In an emergency, call 112 (Nigeria Police) or 122 (FRSC), or go to the nearest hospital immediately.
-
-6. Third-party transactions
+5. Third-party transactions
 NeighbourLink connects neighbours and businesses but does not provide, guarantee or take responsibility for goods, services or payments arranged between users. Use caution and verify before you pay.
 
-7. Suspension and removal
+6. Suspension and removal
 We may suspend accounts or remove content that breaks these terms, without notice where necessary to protect the community.
 
-8. Changes
+7. Changes
 We may update these terms. The date of the latest change is shown on this page.
 
-9. Contact
+8. Contact
 Questions about these terms: +2349030192034.`,
   },
 ];

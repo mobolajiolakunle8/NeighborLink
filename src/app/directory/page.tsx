@@ -7,7 +7,7 @@ import MapPanel from "@/components/MapPanel";
 import { useSite } from "@/context/SiteContext";
 import { getDb } from "@/lib/firebase";
 import { useLiveList, usePagination } from "@/lib/hooks";
-import { hasBusinessLocation, sortByTimestampDesc, toDate } from "@/lib/utils";
+import { businessCoordinates, sortByTimestampDesc, toDate } from "@/lib/utils";
 import type { Business } from "@/lib/types";
 import BusinessCard from "@/components/BusinessCard";
 import { Reveal } from "@/components/motion";
@@ -20,9 +20,9 @@ type SortKey = "featured" | "newest" | "popular" | "az";
 export default function DirectoryPage() {
   const { activeCategories, activeNeighbourhoods, categoryName, neighbourhoodName } = useSite();
   const listing = useLiveList<Business>("directory-approved", () =>
-    query(collection(getDb(), "businesses"), where("status", "==", "approved"), orderBy("createdAt", "desc"), limit(500)),
+    query(collection(getDb(), "businesses"), where("status", "==", "approved"), orderBy("createdAt", "desc"), limit(1000)),
     {
-      fallback: () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), limit(500)),
+      fallback: () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), limit(1000)),
       sort: rows => sortByTimestampDesc(rows, "createdAt"),
     },
   );
@@ -32,6 +32,7 @@ export default function DirectoryPage() {
   const [hood, setHood] = useState("");
   const [sort, setSort] = useState<SortKey>("featured");
   const [view, setView] = useState<"grid" | "map">("grid");
+  const [selectedMapId, setSelectedMapId] = useState<string | undefined>();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -55,7 +56,7 @@ export default function DirectoryPage() {
     }
   }, [listing.data, term, category, hood, sort, categoryName, neighbourhoodName]);
 
-  const mapped = useMemo(() => filtered.filter(hasBusinessLocation).map(b => ({ id: b.id, lat: b.latitude!, lng: b.longitude!, title: b.name, subtitle: b.address || neighbourhoodName(b.neighbourhoodId), href: `/business/${b.id}` })), [filtered, neighbourhoodName]);
+  const mapped = useMemo(() => filtered.flatMap(b => { const c = businessCoordinates(b); return c ? [{ id: b.id, lat: c.lat, lng: c.lng, title: b.name, subtitle: b.address || neighbourhoodName(b.neighbourhoodId), href: `/business/${b.id}` }] : []; }), [filtered, neighbourhoodName]);
 
   const pager = usePagination(filtered, PAGE_SIZE);
   const { setPage } = pager;
@@ -84,7 +85,7 @@ export default function DirectoryPage() {
       <div className="mt-5">
         {listing.problem ? <SetupNotice problem={listing.problem} /> : listing.loading ? <CardSkeleton count={6} /> : pager.total === 0 ? (
           <EmptyState icon={Store} title="No businesses match your search" text={hasFilters ? "Try a different keyword, category or neighbourhood." : "No approved listings yet. Check back soon."} action={hasFilters ? <button type="button" onClick={reset} className="btn-primary">Clear filters</button> : undefined} />
-        ) : view === "map" ? <Reveal variant="fade"><div className="space-y-3"><MapPanel points={mapped} height={520} /><p className="text-xs text-muted">{mapped.length} of {filtered.length} matching businesses have a saved location. Owners can add a pin from their listing form.</p></div></Reveal> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{pager.pageItems.map((b, i) => <Reveal key={b.id} variant="up" delay={Math.min(i * 60, 360)}><BusinessCard business={b} categoryName={categoryName(b.categoryId)} neighbourhoodName={neighbourhoodName(b.neighbourhoodId)} /></Reveal>)}</div>}
+        ) : view === "map" ? <Reveal variant="fade"><div className="space-y-3"><MapPanel points={mapped} height={520} selectedId={selectedMapId} onSelect={setSelectedMapId} /><p className="text-xs text-muted">{mapped.length} of {filtered.length} matching businesses have an exact saved location. Select a pin or name to focus it.</p>{mapped.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Geotagged businesses">{mapped.map(b => <button key={b.id} type="button" onClick={() => setSelectedMapId(b.id)} aria-pressed={selectedMapId === b.id} className={`shrink-0 rounded-full border px-3 py-2 text-xs font-bold ${selectedMapId === b.id ? "border-forest bg-forest text-cream" : "border-line bg-white hover:bg-sage"}`}>{b.title}</button>)}</div>}</div></Reveal> : <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{pager.pageItems.map((b, i) => <Reveal key={b.id} variant="up" delay={Math.min(i * 60, 360)}><BusinessCard business={b} categoryName={categoryName(b.categoryId)} neighbourhoodName={neighbourhoodName(b.neighbourhoodId)} /></Reveal>)}</div>}
       </div>
       {view === "grid" && <Pagination page={pager.page} pages={pager.pages} onChange={setPage} />}
       <p className="mt-8 text-center text-sm text-muted">Own a business? <a href="/register" className="font-bold underline">Create a free account</a> to list it.</p>

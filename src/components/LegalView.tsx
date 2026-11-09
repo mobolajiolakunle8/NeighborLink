@@ -22,7 +22,6 @@ export default function LegalView({ id }: { id: "privacy" | "terms" }) {
           <h1 className="mt-4 text-3xl font-extrabold tracking-tight">{page?.title}</h1>
           <p className="mt-1 text-sm text-muted">Last updated: {data ? formatDate(data.updatedAt, { dateStyle: "full" }) : "—"}</p>
           <article className="card mt-6 p-6 sm:p-8"><p className="whitespace-pre-line leading-relaxed text-forest/85">{page?.content}</p></article>
-          <div className="mt-4 rounded-2xl border border-[#EAD9AE] bg-gold-soft p-5 text-sm font-semibold text-[#7A5A1E]">Emergency reminder: NeighbourLink is not an emergency service. In an emergency, call 112 (Nigeria Police) or 122 (FRSC) immediately.</div>
         </>
       )}
     </div>

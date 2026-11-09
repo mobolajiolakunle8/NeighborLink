@@ -3,14 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import { ExternalLink, MapPin } from "lucide-react";
+import OpenStreetMap from "./OpenStreetMap";
+import { groupMapPoints, type MapPoint } from "./map-types";
 
 export const IBADAN_CENTER = { lat: 7.3775, lng: 3.947 };
-export type MapPoint = { id: string; lat: number; lng: number; title: string; subtitle?: string; href?: string };
+export type { MapPoint } from "./map-types";
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 const MAP_ID = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
 export const GOOGLE_MAPS_CONFIGURED = Boolean(API_KEY);
 let configured = false;
 let libraries: Promise<[google.maps.MapsLibrary, google.maps.MarkerLibrary]> | null = null;
+
 function loadLibraries() {
   if (!libraries) {
     if (!configured) {
@@ -25,23 +28,39 @@ function loadLibraries() {
   return libraries;
 }
 
-export default function GoogleMap({ points, height = 380, editable = false, onPick, label = "Business locations in Ibadan" }: {
-  points: MapPoint[]; height?: number; editable?: boolean; onPick?: (lat: number, lng: number) => void; label?: string;
-}) {
+type Props = {
+  points: MapPoint[];
+  height?: number;
+  editable?: boolean;
+  onPick?: (lat: number, lng: number) => void;
+  label?: string;
+  selectedId?: string;
+  onSelect?: (id: string) => void;
+};
+
+export default function GoogleMap({ points, height = 380, editable = false, onPick, label = "Business locations in Ibadan", selectedId, onSelect }: Props) {
   const element = useRef<HTMLDivElement>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
-  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const markersRef = useRef(new globalThis.Map<string, google.maps.marker.AdvancedMarkerElement>());
+  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const onPickRef = useRef(onPick); onPickRef.current = onPick;
+  const onSelectRef = useRef(onSelect); onSelectRef.current = onSelect;
   const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [useFallback, setUseFallback] = useState(!API_KEY);
   const pointKey = useMemo(() => points.map(p => `${p.id}:${p.lat}:${p.lng}:${p.title}:${p.subtitle ?? ""}:${p.href ?? ""}`).join("|"), [points]);
 
   useEffect(() => {
+    if (!API_KEY) { setUseFallback(true); return; }
     let cancelled = false;
     let clickListener: google.maps.MapsEventListener | undefined;
     let observer: ResizeObserver | undefined;
     let map: google.maps.Map | null = null;
-    if (!API_KEY) { setError("Google Maps is not available yet."); return; }
+    let readyTimer: number | undefined;
+    const authWindow = window as Window & { gm_authFailure?: () => void };
+    const previousAuthFailure = authWindow.gm_authFailure;
+    authWindow.gm_authFailure = () => { previousAuthFailure?.(); if (!cancelled) setUseFallback(true); };
+    readyTimer = window.setTimeout(() => { if (!cancelled) setUseFallback(true); }, 15000);
+
     void loadLibraries().then(([maps, markerLibrary]) => {
       if (cancelled || !element.current) return;
       map = new maps.Map(element.current, {
@@ -61,32 +80,83 @@ export default function GoogleMap({ points, height = 380, editable = false, onPi
       });
       observer = new ResizeObserver(() => { if (map) google.maps.event.trigger(map, "resize"); });
       observer.observe(element.current);
+      if (readyTimer) window.clearTimeout(readyTimer);
       setReady(true);
-    }).catch(() => { if (!cancelled) setError("Google Maps could not load. Check that its API key and billing are enabled for this domain."); });
+    }).catch(() => { if (!cancelled) setUseFallback(true); });
+
     return () => {
       cancelled = true;
-      clickListener?.remove(); observer?.disconnect();
+      if (readyTimer) window.clearTimeout(readyTimer);
+      authWindow.gm_authFailure = previousAuthFailure;
+      clickListener?.remove();
+      observer?.disconnect();
+      infoWindowRef.current?.close();
       markersRef.current.forEach(marker => { marker.map = null; });
-      markersRef.current = []; mapRef.current = null; setReady(false);
+      markersRef.current.clear();
+      mapRef.current = null;
+      setReady(false);
     };
   }, [editable]);
 
   useEffect(() => {
     const map = mapRef.current as (google.maps.Map & { __neighbourMarker?: typeof google.maps.marker.AdvancedMarkerElement }) | null;
     if (!ready || !map?.__neighbourMarker) return;
-    markersRef.current.forEach(marker => { marker.map = null; }); markersRef.current = [];
-    const valid = points.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180);
+    markersRef.current.forEach(marker => { marker.map = null; });
+    markersRef.current.clear();
+    infoWindowRef.current?.close();
+
+    const groups = groupMapPoints(points);
+    const showLabels = groups.length <= 30;
     const bounds = new google.maps.LatLngBounds();
-    for (const point of valid) {
-      const pin = document.createElement("span"); pin.className = "google-map-pin"; pin.setAttribute("aria-hidden", "true");
-      const marker = new map.__neighbourMarker({ map, position: { lat: point.lat, lng: point.lng }, title: point.title, content: pin, gmpClickable: true, gmpDraggable: editable });
-      marker.addEventListener("gmp-click", () => {
-        const content = document.createElement("div");
-        const title = document.createElement("strong"); title.textContent = point.title; content.appendChild(title);
-        if (point.subtitle) { const subtitle = document.createElement("p"); subtitle.textContent = point.subtitle; content.appendChild(subtitle); }
-        if (point.href && /^\/business\/[A-Za-z0-9_-]+$/.test(point.href)) { const link = document.createElement("a"); link.href = point.href; link.textContent = "View business"; content.appendChild(link); }
-        new google.maps.InfoWindow({ content }).open({ map, anchor: marker });
+
+    for (const group of groups) {
+      const first = group.points[0];
+      const content = document.createElement("div");
+      content.className = "google-map-marker";
+      const pin = document.createElement("span");
+      pin.className = "google-map-pin";
+      content.appendChild(pin);
+      if (group.points.length > 1) {
+        const count = document.createElement("span");
+        count.className = "google-map-count";
+        count.textContent = String(group.points.length);
+        content.appendChild(count);
+      } else if (showLabels) {
+        const labelEl = document.createElement("span");
+        labelEl.className = "google-map-label";
+        labelEl.textContent = first.title;
+        content.appendChild(labelEl);
+      }
+
+      const marker = new map.__neighbourMarker({
+        map,
+        position: { lat: group.lat, lng: group.lng },
+        title: group.points.length > 1 ? `${first.title} and ${group.points.length - 1} more at this location` : first.title,
+        content,
+        gmpClickable: true,
+        gmpDraggable: editable,
       });
+
+      marker.addEventListener("gmp-click", () => {
+        onSelectRef.current?.(first.id);
+        const popup = document.createElement("div");
+        popup.className = "google-map-popup";
+        for (const point of group.points) {
+          const item = document.createElement("div");
+          item.className = "google-map-popup-item";
+          const title = document.createElement("strong"); title.textContent = point.title; item.appendChild(title);
+          if (point.subtitle) { const subtitle = document.createElement("p"); subtitle.textContent = point.subtitle; item.appendChild(subtitle); }
+          const coords = document.createElement("small"); coords.textContent = `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}`; item.appendChild(coords);
+          if (point.href && /^\/business\/[A-Za-z0-9_-]+$/.test(point.href)) {
+            const link = document.createElement("a"); link.href = point.href; link.textContent = "View business"; item.appendChild(link);
+          }
+          popup.appendChild(item);
+        }
+        infoWindowRef.current?.close();
+        infoWindowRef.current = new google.maps.InfoWindow({ content: popup });
+        infoWindowRef.current.open({ map, anchor: marker });
+      });
+
       if (editable) marker.addListener("dragend", () => {
         const pos = marker.position;
         if (!pos) return;
@@ -94,30 +164,48 @@ export default function GoogleMap({ points, height = 380, editable = false, onPi
         const lng = typeof pos.lng === "function" ? pos.lng() : pos.lng;
         onPickRef.current?.(Number(Number(lat).toFixed(6)), Number(Number(lng).toFixed(6)));
       });
-      markersRef.current.push(marker); bounds.extend({ lat: point.lat, lng: point.lng });
+
+      markersRef.current.set(group.key, marker);
+      bounds.extend({ lat: group.lat, lng: group.lng });
     }
-    if (valid.length === 1) { map.setCenter({ lat: valid[0].lat, lng: valid[0].lng }); map.setZoom(16); }
-    else if (valid.length > 1) map.fitBounds(bounds, 48);
+
+    if (groups.length === 1) { map.setCenter({ lat: groups[0].lat, lng: groups[0].lng }); map.setZoom(16); }
+    else if (groups.length > 1) map.fitBounds(bounds, 48);
     else { map.setCenter(IBADAN_CENTER); map.setZoom(12); }
-  }, [ready, pointKey, editable]);
+
+    if (selectedId) {
+      const selectedGroup = groups.find(g => g.points.some(p => p.id === selectedId));
+      const marker = selectedGroup ? markersRef.current.get(selectedGroup.key) : undefined;
+      if (selectedGroup && marker) {
+        map.setCenter({ lat: selectedGroup.lat, lng: selectedGroup.lng });
+        map.setZoom(Math.max(map.getZoom() ?? 12, 16));
+        window.setTimeout(() => marker.dispatchEvent(new Event("gmp-click")), 80);
+      }
+    }
+  }, [ready, pointKey, editable, selectedId, points]);
+
+  if (useFallback) {
+    return <OpenStreetMap points={points} height={height} editable={editable} onPick={onPick} label={label} selectedId={selectedId} onSelect={onSelect} />;
+  }
 
   const first = points.find(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
   const external = first
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${first.lat},${first.lng}`)}`
     : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent("Ibadan, Nigeria")}`;
+
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-sage">
-      {error ? (
+      <div ref={element} style={{ height, width: "100%" }} role="region" aria-label={label} />
+      {!ready && (
         <div style={{ minHeight: height }} className="flex flex-col items-center justify-center gap-3 p-6 text-center">
           <MapPin size={30} className="text-bronze" aria-hidden />
-          <p className="text-sm font-bold text-forest">{editable ? "Choose your business location" : "View this area in Google Maps"}</p>
-          <p className="max-w-md text-xs text-muted">{editable ? "Enter coordinates or open Google Maps, find your business, then enter its latitude and longitude." : "Open the saved business location in Google Maps."}</p>
-          <a href={external} target="_blank" rel="noopener noreferrer" className="btn-outline !py-2 !text-xs"><ExternalLink size={14} />Open Google Maps</a>
+          <p className="text-sm font-bold text-forest">Loading Google Map…</p>
+          <a href={external} target="_blank" rel="noopener noreferrer" className="btn-outline !py-2 !text-xs"><ExternalLink size={14} />Open in Google Maps</a>
         </div>
-      ) : (
-        <><div ref={element} style={{ height, width: "100%" }} role="region" aria-label={label} />{!ready && <div className="pointer-events-none relative -mt-12 grid place-items-center text-xs font-bold text-muted">Loading Google Map…</div>}</>
       )}
-      <ul className="sr-only" aria-label="Mapped business locations">{points.map(p => <li key={p.id}>{p.title}{p.subtitle ? `, ${p.subtitle}` : ""}{p.href && <a href={p.href}>View business</a>}</li>)}</ul>
+      <ul className="sr-only" aria-label="Mapped business locations">
+        {points.map(p => <li key={p.id}>{p.title} at {p.lat.toFixed(6)}, {p.lng.toFixed(6)}{p.href && <a href={p.href}>View business</a>}</li>)}
+      </ul>
     </div>
   );
 }

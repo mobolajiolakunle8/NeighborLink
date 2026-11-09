@@ -1,50 +1,79 @@
 rules_version = '2';
 // NeighbourLink — Cloud Firestore security rules.
-// Deny by default. Roles live in users/{uid}.role. The FIRST administrator is created
-// once via config/bootstrap with a setup key verified against its SHA-256 hash; the
-// plaintext key is never shipped in the website. Further admins are granted by admins.
+// Deny by default. Admin roles can only be granted by an existing verified admin.
+// The first administrator is created directly in the Firebase Console; no public
+// bootstrap, setup key, or self-registration path can grant admin.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
     function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function isAdmin() { return signedIn() && me().role == 'admin' && me().get('isSuspended', false) != true; }
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && me().role == 'admin'
+        && me().get('isSuspended', false) != true;
+    }
     function active() { return signedIn() && me().get('isSuspended', false) != true; }
-    function bootstrapPath() { return /databases/$(database)/documents/config/bootstrap; }
-    // True only inside the single batch that claims the one-time bootstrap.
-    function claimingBootstrap() {
-      return !exists(bootstrapPath()) && getAfter(bootstrapPath()).data.adminUid == request.auth.uid;
+
+    // Firebase adds these token claims only after a second-factor challenge succeeds.
+    function hasSecondFactor() {
+      return signedIn()
+        && request.auth.token.firebase.get('sign_in_second_factor', null) != null
+        && 'second_factor_identifier' in request.auth.token.firebase;
+    }
+    function adminMfaRequired() {
+      return exists(/databases/$(database)/documents/config/security)
+        && get(/databases/$(database)/documents/config/security).data.get('requireAdminMfa', false) == true;
+    }
+    function privilegedAdmin() {
+      return isAdmin() && (!adminMfaRequired() || hasSecondFactor());
     }
 
-    // ---------- one-time first-admin bootstrap ----------
+    // ---------- security configuration & retired bootstrap ----------
+    match /config/security {
+      allow read: if true;
+      // Only an MFA-verified admin can turn enforcement on, and it cannot be turned off.
+      allow create, update: if privilegedAdmin() && hasSecondFactor()
+        && request.resource.data.requireAdminMfa == true
+        && request.resource.data.keys().hasOnly(['requireAdminMfa', 'updatedAt', 'enabledBy']);
+      allow delete: if false;
+    }
     match /config/bootstrap {
-      allow read: if isAdmin();
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['adminUid', 'setupKey', 'claimedAt'])
-        && request.resource.data.adminUid == request.auth.uid
-        && request.resource.data.setupKey is string
-        && hashing.sha256(request.resource.data.setupKey).toHexString().lower() == '8d11ef54288014ff687921fee39572c42ea2fdbbc570778d4a279dd366bf5714'
-        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-      allow update, delete: if false;
+      allow read, write: if false;
+    }
+
+    // Email bans survive account deletion, so suspended users cannot re-register.
+    match /accountBans/{emailHash} {
+      allow read: if privilegedAdmin();
+      allow create, update: if privilegedAdmin()
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'emailHash', 'active', 'createdAt'])
+        && request.resource.data.emailHash == emailHash
+        && request.resource.data.emailHash == hashing.sha256(request.resource.data.email.lower()).toHexString().lower()
+        && request.resource.data.active == true;
+      // Restoring an account removes the ban; only a privileged admin may do so.
+      allow delete: if privilegedAdmin();
     }
 
     // ---------- users ----------
     match /users/{uid} {
-      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow read: if privilegedAdmin() || (signedIn() && request.auth.uid == uid);
       allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.email == request.auth.token.email.lower()
+        && request.resource.data.emailHash == hashing.sha256(request.resource.data.email.lower()).toHexString().lower()
         && request.resource.data.isSuspended == false
+        && request.resource.data.role in ['resident', 'business']
         && !request.resource.data.keys().hasAny(['adminSetupKey', 'suspendedReason'])
-        && (request.resource.data.role in ['resident', 'business']
-            || (request.resource.data.role == 'admin' && claimingBootstrap()));
-      allow update: if isAdmin()
-        || (signedIn() && request.auth.uid == uid
-            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isSuspended', 'suspendedReason', 'email', 'uid', 'createdAt'])
+        && !exists(/databases/$(database)/documents/accountBans/$(request.resource.data.emailHash));
+      allow update: if privilegedAdmin()
+        || (active() && request.auth.uid == uid
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+              'isSuspended', 'suspendedReason', 'email', 'emailHash', 'uid', 'createdAt', 'adminSetupKey'
+            ])
             && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
-                || request.resource.data.role in ['resident', 'business']
-                || (request.resource.data.role == 'admin' && claimingBootstrap()))
-            && !request.resource.data.keys().hasAny(['adminSetupKey']));
-      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+                || request.resource.data.role in ['resident', 'business']));
+      allow delete: if privilegedAdmin() || (active() && request.auth.uid == uid);
 
       // Saved businesses: private to the owner.
       match /saved/{bizId} {
@@ -54,44 +83,58 @@ service cloud.firestore {
           && request.resource.data.businessId == bizId;
       }
 
-      // In-app notifications: the owner reads, marks read and deletes.
+      // Notifications: every alert must point to a real, matching source document.
+      function reviewNoticeValid(uid, d) {
+        let review = get(/databases/$(database)/documents/reviews/$(d.sourceId)).data;
+        let business = get(/databases/$(database)/documents/businesses/$(review.businessId)).data;
+        return review.userId == request.auth.uid && business.ownerId == uid;
+      }
+      function noticeSourceValid(uid, d) {
+        return (d.type == 'review' && d.sourceType == 'review' && reviewNoticeValid(uid, d))
+          || (d.type == 'message' && d.sourceType == 'conversation' && privilegedAdmin()
+              && get(/databases/$(database)/documents/conversations/$(d.sourceId)).data.userId == uid)
+          || (d.type in ['listing', 'verification'] && d.sourceType == 'business' && privilegedAdmin()
+              && get(/databases/$(database)/documents/businesses/$(d.sourceId)).data.ownerId == uid)
+          || (d.type == 'account' && d.sourceType == 'user' && d.sourceId == uid
+              && privilegedAdmin() && exists(/databases/$(database)/documents/users/$(uid)));
+      }
       match /notifications/{nid} {
         allow read, delete: if signedIn() && request.auth.uid == uid;
         allow update: if signedIn() && request.auth.uid == uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
           && request.resource.data.read is bool;
         allow create: if active()
-          && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'link', 'actorId', 'read', 'createdAt'])
+          && request.auth.uid != uid
+          && request.resource.data.keys().hasOnly([
+            'type', 'title', 'body', 'link', 'actorId', 'sourceType', 'sourceId', 'read', 'createdAt'
+          ])
           && request.resource.data.actorId == request.auth.uid
+          && request.resource.data.sourceId is string
+          && request.resource.data.sourceType in ['review', 'business', 'conversation', 'user']
+          && request.resource.data.type in ['review', 'message', 'listing', 'verification', 'account']
           && request.resource.data.read == false
+          && request.resource.data.createdAt == request.time
           && request.resource.data.title is string && request.resource.data.title.size() <= 160
           && request.resource.data.body is string && request.resource.data.body.size() <= 400
           && request.resource.data.link is string && request.resource.data.link.matches('/.*')
-          && request.auth.uid != uid
-          && (request.resource.data.type == 'review'
-              || (request.resource.data.type == 'message' && (isAdmin() || get(/databases/$(database)/documents/users/$(uid)).data.role == 'admin'))
-              || (isAdmin() && request.resource.data.type in ['listing', 'verification', 'account']));
+          && noticeSourceValid(uid, request.resource.data);
       }
     }
 
     // ---------- site configuration ----------
-    match /siteSettings/{docId} { allow read: if true; allow write: if isAdmin(); }
-    match /categories/{docId} { allow read: if true; allow write: if isAdmin(); }
-    match /neighbourhoods/{docId} { allow read: if true; allow write: if isAdmin(); }
-    match /legalPages/{docId} { allow read: if true; allow write: if isAdmin(); }
+    match /siteSettings/{docId} { allow read: if true; allow write: if privilegedAdmin(); }
+    match /categories/{docId} { allow read: if true; allow write: if privilegedAdmin(); }
+    match /neighbourhoods/{docId} { allow read: if true; allow write: if privilegedAdmin(); }
+    match /legalPages/{docId} { allow read: if true; allow write: if privilegedAdmin(); }
 
     // ---------- business listings ----------
     function verificationUnchanged() {
       return request.resource.data.get('verificationStatus', 'none') == resource.data.get('verificationStatus', 'none')
         && request.resource.data.get('cacNumber', null) == resource.data.get('cacNumber', null);
     }
-    function validLocation(d) {
-      let hasLat = d.get('latitude', null) != null;
-      let hasLng = d.get('longitude', null) != null;
-      return hasLat == hasLng && (!hasLat || (
-        d.latitude is number && d.longitude is number
-        && d.latitude >= -90 && d.latitude <= 90
-        && d.longitude >= -180 && d.longitude <= 180));
+    function hasLocation(d) {
+      return d.get('latitude', null) is number && d.get('longitude', null) is number
+        && d.latitude >= -90 && d.latitude <= 90 && d.longitude >= -180 && d.longitude <= 180;
     }
     match /businesses/{bizId} {
       allow read: if resource.data.status == 'approved' || isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
@@ -101,30 +144,30 @@ service cloud.firestore {
         && request.resource.data.isFeatured == false
         && request.resource.data.views == 0
         && request.resource.data.get('verificationStatus', 'none') == 'none'
-        && validLocation(request.resource.data)
+        && hasLocation(request.resource.data)
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 3 && request.resource.data.name.size() <= 180
         && request.resource.data.description is string
         && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 4000;
-      allow update: if isAdmin()
-        // Owner content edit: back to pending review; cannot touch featuring, views or verification.
+      allow update: if privilegedAdmin()
         || (active() && resource.data.ownerId == request.auth.uid
             && request.resource.data.ownerId == resource.data.ownerId
             && request.resource.data.status == 'pending'
             && request.resource.data.isFeatured == resource.data.isFeatured
             && request.resource.data.views == resource.data.views
             && verificationUnchanged()
-            && validLocation(request.resource.data))
-        // Owner verification request: only these fields, status must become 'requested'.
+            && hasLocation(request.resource.data))
+        || (active() && resource.data.ownerId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['latitude', 'longitude', 'locationUpdatedAt', 'updatedAt'])
+            && hasLocation(request.resource.data))
         || (active() && resource.data.ownerId == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verificationStatus', 'cacNumber', 'verificationNote', 'verificationRequestedAt', 'updatedAt'])
             && request.resource.data.verificationStatus == 'requested'
             && request.resource.data.cacNumber is string && request.resource.data.cacNumber.size() >= 4 && request.resource.data.cacNumber.size() <= 40)
-        // Anyone may add exactly one view to an approved listing.
         || (resource.data.status == 'approved'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views'])
             && request.resource.data.views == resource.data.views + 1);
-      allow delete: if isAdmin() || (active() && resource.data.ownerId == request.auth.uid);
+      allow delete: if privilegedAdmin() || (active() && resource.data.ownerId == request.auth.uid);
     }
 
     // ---------- reviews ----------
@@ -139,7 +182,7 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.status == 'approved'
         && get(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)).data.ownerId != request.auth.uid;
       allow update: if false;
-      allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow delete: if privilegedAdmin() || (active() && resource.data.userId == request.auth.uid);
     }
 
     // ---------- community help board ----------
@@ -153,16 +196,14 @@ service cloud.firestore {
         && request.resource.data.title.size() >= 5 && request.resource.data.title.size() <= 200
         && request.resource.data.description is string
         && request.resource.data.description.size() >= 20 && request.resource.data.description.size() <= 3000;
-      allow update: if isAdmin()
+      allow update: if privilegedAdmin()
         || (active() && resource.data.userId == request.auth.uid
             && request.resource.data.userId == resource.data.userId
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'title', 'description', 'contactPhone', 'category', 'neighbourhoodId', 'updatedAt']));
-      allow delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow delete: if privilegedAdmin() || (active() && resource.data.userId == request.auth.uid);
     }
 
     // ---------- admin support inbox ----------
-    // New conversations are member <-> admin team. Active admins may read/reply to all
-    // admin threads; members only see their own. Legacy peer threads are read-only.
     function supportTarget(d) {
       return d.targetType == 'support' ? d.targetId == null
         : d.targetType == 'business' ? get(/databases/$(database)/documents/businesses/$(d.targetId)).data.status == 'approved'
@@ -190,6 +231,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
         && request.resource.data.readAt is map && request.resource.data.readAt.keys().hasOnly([request.auth.uid]);
       allow update: if active() && threadAccess(resource.data)
+        && (request.auth.uid == resource.data.userId || privilegedAdmin())
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage', 'lastSenderId', 'lastMessageAt', 'readAt', 'closedBy', 'updatedAt'])
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastMessage', 'lastSenderId', 'lastMessageAt'])
             || (resource.data.closedBy == null && request.resource.data.lastSenderId == request.auth.uid
@@ -200,13 +242,14 @@ service cloud.firestore {
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['closedBy'])
             || (resource.data.closedBy == null && request.resource.data.closedBy == request.auth.uid)
             || (resource.data.closedBy == request.auth.uid && request.resource.data.closedBy == null));
-      allow delete: if active() && (resource.data.get('userId', '') == request.auth.uid || (resource.data.get('kind', 'legacy') == 'admin' && isAdmin()) || (resource.data.get('kind', 'legacy') == 'legacy' && request.auth.uid in resource.data.members));
+      allow delete: if active() && (resource.data.get('userId', '') == request.auth.uid || (resource.data.get('kind', 'legacy') == 'admin' && privilegedAdmin()) || (resource.data.get('kind', 'legacy') == 'legacy' && request.auth.uid in resource.data.members));
 
       match /messages/{mid} {
         function parent() { return get(/databases/$(database)/documents/conversations/$(cid)).data; }
         function parentAfter() { return getAfter(/databases/$(database)/documents/conversations/$(cid)).data; }
         allow read: if active() && (threadAccess(parent()) || (parent().get('kind', 'legacy') == 'legacy' && request.auth.uid in parent().members));
         allow create: if active() && threadAccess(parentAfter())
+          && (request.auth.uid == parentAfter().userId || privilegedAdmin())
           && parentAfter().closedBy == null
           && request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt'])
           && request.resource.data.senderId == request.auth.uid
@@ -215,22 +258,22 @@ service cloud.firestore {
           && parentAfter().lastSenderId == request.auth.uid && parentAfter().lastMessage == request.resource.data.text
           && parentAfter().lastMessageAt == request.time;
         allow update: if false;
-        allow delete: if active() && (parent().get('userId', '') == request.auth.uid || (parent().get('kind', 'legacy') == 'admin' && isAdmin()) || (parent().get('kind', 'legacy') == 'legacy' && request.auth.uid in parent().members));
+        allow delete: if active() && (parent().get('userId', '') == request.auth.uid || (parent().get('kind', 'legacy') == 'admin' && privilegedAdmin()) || (parent().get('kind', 'legacy') == 'legacy' && request.auth.uid in parent().members));
       }
     }
 
     // ---------- announcements, moderation, audit, contact ----------
     match /announcements/{annId} {
       allow read: if resource.data.isPublished == true || isAdmin();
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if privilegedAdmin();
     }
     match /reports/{reportId} {
       allow create: if active() && request.resource.data.reporterId == request.auth.uid && request.resource.data.status == 'open';
-      allow read, update, delete: if isAdmin();
+      allow read, update, delete: if privilegedAdmin();
     }
     match /activityLogs/{logId} {
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow read: if isAdmin();
+      allow create: if active() && request.resource.data.userId == request.auth.uid;
+      allow read: if privilegedAdmin();
       allow update, delete: if false;
     }
     match /contactMessages/{msgId} {
@@ -241,7 +284,23 @@ service cloud.firestore {
         && request.resource.data.message is string
         && request.resource.data.message.size() >= 10 && request.resource.data.message.size() <= 3000
         && request.resource.data.status == 'new';
-      allow read, update, delete: if isAdmin();
+      allow read, update, delete: if privilegedAdmin();
+    }
+
+    // ---------- on-site assistant reporting ----------
+    match /assistantLogs/{logId} {
+      allow create: if request.resource.data.keys().hasOnly(['question', 'answer', 'intent', 'links', 'pagePath', 'uid', 'reviewed', 'createdAt'])
+        && request.resource.data.question is string
+        && request.resource.data.question.size() >= 1 && request.resource.data.question.size() <= 500
+        && request.resource.data.answer is string
+        && request.resource.data.answer.size() >= 1 && request.resource.data.answer.size() <= 2000
+        && request.resource.data.intent is string && request.resource.data.intent.size() <= 60
+        && request.resource.data.links is list && request.resource.data.links.size() <= 8
+        && request.resource.data.pagePath is string && request.resource.data.pagePath.size() <= 200
+        && (request.resource.data.uid == null || (request.resource.data.uid is string && request.resource.data.uid.size() <= 128))
+        && request.resource.data.reviewed == false
+        && request.resource.data.createdAt == request.time;
+      allow read, update, delete: if privilegedAdmin();
     }
   }
 }

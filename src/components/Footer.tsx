@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Mail, MapPin, Phone, ShieldAlert } from "lucide-react";
+import { Mail, MapPin, Phone } from "lucide-react";
 import { useSite } from "@/context/SiteContext";
 import { isHttpUrl } from "@/lib/utils";
 import { Reveal } from "@/components/motion";
@@ -41,7 +41,6 @@ export default function Footer() {
           <div>
             <p className="mb-3 font-bold">Legal & safety</p>
             <ul className="space-y-2 text-sm text-sage/85"><li><Link href="/privacy" className="transition hover:text-gold">Privacy Policy</Link></li><li><Link href="/terms" className="transition hover:text-gold">Terms of Service</Link></li></ul>
-            <p className="mt-4 flex gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-xs leading-relaxed text-sage/80"><ShieldAlert size={16} className="mt-0.5 shrink-0 text-gold" aria-hidden />{settings.emergencyDisclaimer}</p>
           </div>
         </Reveal>
       </div>

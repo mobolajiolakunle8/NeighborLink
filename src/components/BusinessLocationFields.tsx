@@ -12,7 +12,7 @@ export function validCoordinatePair(lat: string, lng: string): boolean {
   return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
 }
 
-export default function BusinessLocationFields({ latitude, longitude, onChange }: { latitude: string; longitude: string; onChange: (lat: string, lng: string) => void }) {
+export default function BusinessLocationFields({ latitude, longitude, onChange, searchQuery }: { latitude: string; longitude: string; onChange: (lat: string, lng: string) => void; searchQuery?: string }) {
   const [locating, setLocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const valid = validCoordinatePair(latitude, longitude);
@@ -42,7 +42,10 @@ export default function BusinessLocationFields({ latitude, longitude, onChange }
       {!valid && <Alert kind="error">Enter both latitude (-90 to 90) and longitude (-180 to 180), or leave both empty.</Alert>}
       {error && <Alert kind="warning">{error}</Alert>}
       <MapPanel points={points} height={260} editable onPick={(lat, lng) => onChange(String(lat), String(lng))} label="Choose your business location" />
-      <p className="flex items-center gap-1.5 text-xs font-bold text-muted"><MapPin size={13} />{points.length ? "Pin set. Save the listing to publish this location." : "No pin yet — this business will not appear on the location map."}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-xs font-bold text-muted"><MapPin size={13} />{points.length ? `Exact pin: ${Number(latitude).toFixed(6)}, ${Number(longitude).toFixed(6)}` : "No pin yet — this business will not appear on the location map."}</p>
+        {searchQuery?.trim() && <a className="text-xs font-bold underline" target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${searchQuery} Ibadan Nigeria`)}`}>Find address in Google Maps</a>}
+      </div>
     </fieldset>
   );
 }

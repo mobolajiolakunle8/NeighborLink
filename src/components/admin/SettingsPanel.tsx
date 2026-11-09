@@ -204,7 +204,7 @@ export default function SettingsPanel() {
         {text("seoTitle", "Search title (meta title)", "Appears in Google results and browser tabs.", true)}
         {text("seoDescription", "Search description (meta description)", undefined, true)}
         {text("footerText", "Footer tagline", undefined, true)}
-        {text("emergencyDisclaimer", "Emergency disclaimer (footer & contact)", "Keep this clear: NeighbourLink is not an emergency service.", true)}
+
       </fieldset>
     </form>
   );

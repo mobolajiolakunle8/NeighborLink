@@ -24,9 +24,9 @@ export default function HomePage() {
   // so the homepage works even while Firestore indexes are still being built.
   const businesses = useLiveList<Business>(
     "home-biz",
-    () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), orderBy("createdAt", "desc"), limit(200)),
+    () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), orderBy("createdAt", "desc"), limit(1000)),
     {
-      fallback: () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), limit(200)),
+      fallback: () => query(collection(getDb(), "businesses"), where("status", "==", "approved"), limit(1000)),
       sort: (rows) => sortByTimestampDesc(rows, "createdAt"),
     },
   );

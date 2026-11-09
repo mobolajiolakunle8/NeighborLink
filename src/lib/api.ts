@@ -1,14 +1,15 @@
 // Service layer: every write the app performs goes through here. Each function is a
 // thin, typed wrapper around Firestore/Auth, and the rules decide what is allowed.
 import {
-  addDoc, collection, deleteDoc, deleteField, doc, getDoc, getDocs, increment, limit, query,
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs, increment, limit, query,
   serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import {
   createUserWithEmailAndPassword, deleteUser, EmailAuthProvider,
   reauthenticateWithCredential, sendEmailVerification, sendPasswordResetEmail,
-  signInWithEmailAndPassword, signOut, updateProfile, type User,
+  signOut, updateProfile, type User,
 } from "firebase/auth";
+import { adminSignInStep, completeMfaSignIn, emailKey, hasSecondFactor } from "./admin-mfa";
 import { deleteObject, listAll, ref as storageRef } from "firebase/storage";
 import { getAuthClient, getDb, getStorageClient } from "./firebase";
 import { DEFAULT_CATEGORIES, DEFAULT_LEGAL, DEFAULT_NEIGHBOURHOODS, DEFAULT_SETTINGS } from "./defaults";
@@ -16,7 +17,7 @@ import type {
   BusinessStatus, HelpStatus, HelpType, MessageStatus, NotificationType, ReportStatus,
   ReportTargetType, Role, SiteSettings,
 } from "./types";
-import { slugify } from "./utils";
+import { hasBusinessLocation, slugify } from "./utils";
 
 /** Trims strings and converts empty strings to null so optional fields are stored cleanly. */
 function clean<T extends object>(input: T): Record<string, unknown> {
@@ -38,56 +39,61 @@ export async function ensureProfile(user: User) {
   const ref = doc(getDb(), "users", user.uid);
   const snap = await getDoc(ref);
   if (snap.exists()) return;
-  await setDoc(ref, {
-    uid: user.uid, name: user.displayName || "NeighbourLink member", email: user.email ?? "",
-    role: "resident", phone: null, neighbourhood: null, avatarUrl: null, bio: null,
-    isSuspended: false, fcmTokens: [], createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-  });
+  const email = (user.email ?? "").toLowerCase();
+  try {
+    await setDoc(ref, {
+      uid: user.uid, name: user.displayName || "NeighbourLink member", email,
+      emailHash: await emailKey(email),
+      role: "resident", phone: null, neighbourhood: null, avatarUrl: null, bio: null,
+      isSuspended: false, fcmTokens: [], createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    const code = typeof err === "object" && err && "code" in err ? String((err as { code: unknown }).code) : "";
+    if (code === "permission-denied") {
+      await signOut(getAuthClient());
+      throw new Error("This email is not allowed to register. Please contact +2349030192034.");
+    }
+    throw err;
+  }
 }
 
 export interface RegisterInput {
-  name: string; email: string; password: string; role: "resident" | "business" | "admin";
+  name: string; email: string; password: string; role: "resident" | "business";
   phone: string; neighbourhood: string;
-  /** One-time setup key, only used when registering the very first administrator. */
-  adminSetupKey?: string;
 }
 
 function baseProfile(user: User, name: string, role: Role, extra: Record<string, unknown> = {}) {
   return {
-    uid: user.uid, name, email: user.email ?? "", role,
+    uid: user.uid, name, email: (user.email ?? "").toLowerCase(), role,
     phone: null, neighbourhood: null, avatarUrl: null, bio: null,
     isSuspended: false, fcmTokens: [], createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     ...extra,
   };
 }
 
-/**
- * Claims the one-time first-administrator bootstrap. The setup key is checked by the
- * Firestore rules against its SHA-256 hash — it is never stored in this website's code.
- * Works only once per project; afterwards admins are granted from Dashboard → Users.
- */
-export async function claimAdminAccess(setupKey: string, user: User, profileName?: string) {
-  const key = setupKey.trim();
-  if (key.length < 8) throw new Error("Please enter the full Admin Setup Key.");
-  const db = getDb();
-  const ref = doc(db, "users", user.uid);
-  const existing = await getDoc(ref);
-  const batch = writeBatch(db);
-  if (existing.exists()) {
-    const data = existing.data();
-    batch.update(ref, { role: "admin", updatedAt: serverTimestamp(), ...(data.adminSetupKey !== undefined ? { adminSetupKey: deleteField() } : {}) });
-  } else {
-    batch.set(ref, baseProfile(user, profileName || user.displayName || "Administrator", "admin"));
+const MFA_REQUIRED_MESSAGE = "MFA_CODE_REQUIRED";
+export { MFA_REQUIRED_MESSAGE };
+
+export async function completeMfaLogin(otp: string): Promise<Role> {
+  return finishLogin(await completeMfaSignIn(otp));
+}
+
+/** Shared post-sign-in checks for password-only and MFA logins. */
+async function finishLogin(user: User): Promise<Role> {
+  await ensureProfile(user);
+  const snap = await getDoc(doc(getDb(), "users", user.uid));
+  const data = snap.data() as { role?: Role; isSuspended?: boolean; suspendedReason?: string } | undefined;
+  if (data?.isSuspended) {
+    await signOut(getAuthClient());
+    throw new Error(`This account has been suspended${data.suspendedReason ? `: ${data.suspendedReason}` : ""}. Please contact +2349030192034.`);
   }
-  batch.set(doc(db, "config", "bootstrap"), { adminUid: user.uid, setupKey: key, claimedAt: serverTimestamp() });
-  try {
-    await batch.commit();
-  } catch (err) {
-    const code = typeof err === "object" && err && "code" in err ? String((err as { code: unknown }).code) : "";
-    if (code === "permission-denied") throw new Error("That setup key is not valid, or the first administrator has already been set up. Ask an existing administrator to grant you access.");
-    throw err;
+  const [sec] = await Promise.all([getDoc(doc(getDb(), "config", "security"))]);
+  if (data?.role === "admin" && sec.data()?.requireAdminMfa === true && !(await hasSecondFactor(user))) {
+    await signOut(getAuthClient());
+    throw new Error("Administrator MFA is required. Enrol an authenticator app and sign in again.");
   }
-  await logActivity(user.uid, "claim_admin_access", user.email ?? "");
+  await logActivity(user.uid, "login");
+  return data?.role ?? "resident";
 }
 
 export async function registerUser(input: RegisterInput): Promise<User> {
@@ -96,23 +102,17 @@ export async function registerUser(input: RegisterInput): Promise<User> {
   await updateProfile(user, { displayName: input.name.trim() });
   const extra = { phone: input.phone.trim() || null, neighbourhood: input.neighbourhood || null };
   const standardRole: Role = input.role === "business" ? "business" : "resident";
-  await setDoc(doc(getDb(), "users", user.uid), baseProfile(user, input.name.trim(), standardRole, extra));
-  if (input.role === "admin" && input.adminSetupKey) {
-    await claimAdminAccess(input.adminSetupKey, user, input.name.trim());
-  }
+  const email = (user.email ?? "").toLowerCase();
+  await setDoc(doc(getDb(), "users", user.uid), baseProfile(user, input.name.trim(), standardRole, { ...extra, email, emailHash: await emailKey(email) }));
   sendEmailVerification(user).catch(() => undefined);
-  await logActivity(user.uid, "register", input.role === "admin" ? "admin" : standardRole);
+  await logActivity(user.uid, "register", standardRole);
   return user;
 }
 
 export async function loginUser(email: string, password: string): Promise<Role> {
-  const cred = await signInWithEmailAndPassword(getAuthClient(), email.trim(), password);
-  await ensureProfile(cred.user);
-  const snap = await getDoc(doc(getDb(), "users", cred.user.uid));
-  const data = snap.data() as { role?: Role; isSuspended?: boolean } | undefined;
-  if (data?.isSuspended) { await signOut(getAuthClient()); const reason = (snap.data() as { suspendedReason?: string } | undefined)?.suspendedReason; throw new Error(`This account has been suspended${reason ? `: ${reason}` : ""}. Please contact +2349030192034.`); }
-  await logActivity(cred.user.uid, "login");
-  return data?.role ?? "resident";
+  const result = await adminSignInStep(email, password);
+  if (result === "MFA_REQUIRED") throw new Error(MFA_REQUIRED_MESSAGE);
+  return finishLogin(result);
 }
 export async function sendPasswordReset(email: string) { await sendPasswordResetEmail(getAuthClient(), email.trim()); }
 export async function resendVerification(user: User) { await sendEmailVerification(user); }
@@ -123,8 +123,7 @@ export interface ProfilePatch {
   avatarUrl: string | null; role: Role;
 }
 export async function updateMyProfile(uid: string, patch: ProfilePatch) {
-  // deleteField() also cleans up any legacy setup-key field from older builds.
-  await updateDoc(doc(getDb(), "users", uid), { ...patch, adminSetupKey: deleteField(), updatedAt: serverTimestamp() });
+  await updateDoc(doc(getDb(), "users", uid), { ...patch, updatedAt: serverTimestamp() });
   await logActivity(uid, "update_profile");
 }
 /** Permanently deletes the signed-in account after password re-authentication. */
@@ -163,21 +162,34 @@ export async function deleteMyAccount(password: string) {
 }
 
 export async function setMyNeighbourhood(uid: string, neighbourhoodId: string | null) {
-  await updateDoc(doc(getDb(), "users", uid), { neighbourhood: neighbourhoodId, adminSetupKey: deleteField(), updatedAt: serverTimestamp() });
+  await updateDoc(doc(getDb(), "users", uid), { neighbourhood: neighbourhoodId, updatedAt: serverTimestamp() });
 }
 
 // ---------------------------------------------------------------- notifications
 /** Writes an in-app notification for another user. Failures never block the main action. */
-export async function notifyUser(toUid: string, n: { type: NotificationType; title: string; body: string; link: string }) {
+export type NotificationSource = "review" | "business" | "conversation" | "user";
+/** Notifications must reference a verifiable source document; Firestore rules reject fabricated alerts. */
+export async function notifyUser(toUid: string, n: {
+  type: NotificationType; title: string; body: string; link: string;
+  sourceType: NotificationSource; sourceId: string;
+}) {
   const actor = getAuthClient().currentUser;
-  if (!actor || !toUid || actor.uid === toUid) return;
+  if (!actor || !toUid || actor.uid === toUid || !n.sourceId) return;
   try {
     await addDoc(collection(getDb(), "users", toUid, "notifications"), {
       type: n.type, title: n.title.slice(0, 160), body: n.body.slice(0, 400), link: n.link,
+      sourceType: n.sourceType, sourceId: n.sourceId,
       actorId: actor.uid, read: false, createdAt: serverTimestamp(),
     });
-  } catch { /* best-effort */ }
+  } catch { /* best-effort; rules may require MFA before admin notices */ }
 }
+
+/** Enforce MFA for all privileged administrator writes. Can only be enabled by an MFA-verified admin. */
+export async function enableAdminMfaRequirement(actorUid: string) {
+  await setDoc(doc(getDb(), "config", "security"), { requireAdminMfa: true, updatedAt: serverTimestamp(), enabledBy: actorUid }, { merge: true });
+  await logActivity(actorUid, "enable_admin_mfa");
+}
+
 export async function markNotificationRead(uid: string, id: string) {
   await updateDoc(doc(getDb(), "users", uid, "notifications", id), { read: true });
 }
@@ -189,6 +201,16 @@ export async function markAllNotificationsRead(uid: string, ids: string[]) {
 }
 export async function deleteNotification(uid: string, id: string) {
   await deleteDoc(doc(getDb(), "users", uid, "notifications", id));
+}
+
+// ------------------------------------------------- assistant logs (admin reporting)
+export async function markAssistantLogReviewed(id: string, actorUid: string) {
+  await updateDoc(doc(getDb(), "assistantLogs", id), { reviewed: true, reviewedAt: serverTimestamp(), reviewedBy: actorUid });
+  await logActivity(actorUid, "assistant_log_reviewed", id);
+}
+export async function deleteAssistantLog(id: string, actorUid: string) {
+  await deleteDoc(doc(getDb(), "assistantLogs", id));
+  await logActivity(actorUid, "assistant_log_deleted", id);
 }
 
 // ---------------------------------------------------------------- saved businesses
@@ -212,6 +234,13 @@ export async function createBusiness(owner: { uid: string; name: string }, input
   await logActivity(owner.uid, "submit_business", input.name);
   return ref.id;
 }
+export async function updateBusinessLocation(id: string, latitude: number, longitude: number, actorUid: string) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+    throw new Error("Please set a valid map location.");
+  }
+  await updateDoc(doc(getDb(), "businesses", id), { latitude, longitude, locationUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  await logActivity(actorUid, "update_business_location", id);
+}
 export async function updateBusiness(id: string, input: BusinessInput, actorUid: string) {
   await updateDoc(doc(getDb(), "businesses", id), { ...clean(input), status: "pending", locationUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() });
   await logActivity(actorUid, "update_business", input.name);
@@ -222,12 +251,16 @@ export async function setBusinessStatus(id: string, status: BusinessStatus, acto
   await updateDoc(ref, { status, updatedAt: serverTimestamp() });
   await logActivity(actorUid, "moderate_business", `${id}:${status}`);
   const b = snap.data();
+  if (status === "approved" && !hasBusinessLocation({ latitude: b?.latitude, longitude: b?.longitude })) {
+    throw new Error("This listing has no exact map pin yet. Add its latitude and longitude before approval so it appears on the map.");
+  }
   if (b?.ownerId && (status === "approved" || status === "rejected")) {
     await notifyUser(b.ownerId, {
       type: "listing",
       title: status === "approved" ? `“${b.name}” is now live` : `“${b.name}” needs changes`,
       body: status === "approved" ? "Your listing was approved and now appears in the directory." : "Your listing was not approved. Review the details and resubmit, or contact us for help.",
       link: status === "approved" ? `/business/${id}` : "/profile#my-listings",
+      sourceType: "business", sourceId: id,
     });
   }
 }
@@ -277,19 +310,20 @@ export async function setVerification(id: string, status: "verified" | "rejected
       title: status === "verified" ? `“${b.name}” is now a Verified business` : `Verification for “${b.name}” was not approved`,
       body: status === "verified" ? "Your verified badge is now shown on your listing." : "We couldn't confirm your registration details. Check your CAC number and request again.",
       link: `/business/${id}`,
+      sourceType: "business", sourceId: id,
     });
   }
 }
 
 // ---------------------------------------------------------------- reviews
 export async function addReview(businessId: string, author: { uid: string; name: string }, rating: number, comment: string) {
-  await addDoc(collection(getDb(), "reviews"), {
+  const reviewRef = await addDoc(collection(getDb(), "reviews"), {
     businessId, userId: author.uid, authorName: author.name, rating, comment: comment.trim(), createdAt: serverTimestamp(),
   });
   await logActivity(author.uid, "review_business", businessId);
   const b = (await getDoc(doc(getDb(), "businesses", businessId))).data();
   if (b?.ownerId) {
-    await notifyUser(b.ownerId, { type: "review", title: `New ${rating}-star review for “${b.name}”`, body: comment.trim().slice(0, 200), link: `/business/${businessId}` });
+    await notifyUser(b.ownerId, { type: "review", title: `New ${rating}-star review for “${b.name}”`, body: comment.trim().slice(0, 200), link: `/business/${businessId}`, sourceType: "review", sourceId: reviewRef.id });
   }
 }
 
@@ -362,6 +396,7 @@ export async function sendMessage(cid: string, senderUid: string, text: string) 
     await notifyUser(memberUid, {
       type: "message", title: "Reply from the NeighbourLink admin team",
       body: msg.slice(0, 200), link: `/profile?message=${encodeURIComponent(cid)}#messages`,
+      sourceType: "conversation", sourceId: cid,
     });
     await logActivity(senderUid, "admin_reply", cid);
   }
@@ -495,21 +530,45 @@ export async function initializeDefaults(actorUid: string) {
 }
 
 // ---------------------------------------------------------------- admin: users
+async function accountBanData(uid: string) {
+  const snap = await getDoc(doc(getDb(), "users", uid));
+  const email = String(snap.data()?.email ?? "").trim().toLowerCase();
+  if (!email) throw new Error("This user has no email on file and cannot be suspended safely.");
+  const key = await emailKey(email);
+  return { key, email };
+}
+
+/** Suspensions survive profile deletion: a SHA-256 ban blocks recreating the same email. */
 export async function adminUpdateUser(uid: string, patch: { role?: Role; isSuspended?: boolean; suspendedReason?: string | null }, actorUid: string) {
-  await updateDoc(doc(getDb(), "users", uid), { ...patch, updatedAt: serverTimestamp() });
+  const db = getDb();
+  const ref = doc(db, "users", uid);
+  const ban = patch.isSuspended !== undefined ? await accountBanData(uid) : null;
+  const batch = writeBatch(db);
+  batch.update(ref, { ...patch, updatedAt: serverTimestamp() });
+  if (ban) {
+    if (patch.isSuspended) batch.set(doc(db, "accountBans", ban.key), { uid, email: ban.email, emailHash: ban.key, active: true, createdAt: serverTimestamp() });
+    else batch.delete(doc(db, "accountBans", ban.key));
+  }
+  await batch.commit();
   await logActivity(actorUid, "admin_update_user", `${uid}:${JSON.stringify(patch)}`);
   if (patch.isSuspended !== undefined) {
     await notifyUser(uid, {
       type: "account",
       title: patch.isSuspended ? "Your account has been suspended" : "Your account has been restored",
       body: patch.isSuspended ? (patch.suspendedReason || "Contact +2349030192034 for details.") : "You can post, review and message again.",
-      link: "/profile",
+      link: "/profile", sourceType: "user", sourceId: uid,
     });
   }
 }
-/** Removes the Firestore profile. The Firebase Auth account itself can only be deleted
- * with the Admin SDK or in the Firebase Console; the UI makes this explicit to admins. */
+
+/** Deletes the Firestore profile but leaves an email ban so the same email cannot re-register. */
 export async function adminDeleteUserProfile(uid: string, actorUid: string) {
-  await deleteDoc(doc(getDb(), "users", uid));
+  const db = getDb();
+  let ban: { key: string; email: string } | null = null;
+  try { ban = await accountBanData(uid); } catch { /* no email on file */ }
+  const batch = writeBatch(db);
+  batch.delete(doc(db, "users", uid));
+  if (ban) batch.set(doc(db, "accountBans", ban.key), { uid, email: ban.email, emailHash: ban.key, active: true, createdAt: serverTimestamp() });
+  await batch.commit();
   await logActivity(actorUid, "admin_delete_user_profile", uid);
 }

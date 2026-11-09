@@ -17,6 +17,7 @@ export interface UserProfile {
   uid: string;
   name: string;
   email: string;
+  emailHash?: string;
   role: Role;
   phone: string | null;
   neighbourhood: string | null;
@@ -52,7 +53,6 @@ export interface SiteSettings {
   seoTitle: string;
   seoDescription: string;
   footerText: string;
-  emergencyDisclaimer: string;
   socialLinks: Record<string, string>;
   navLinks: NavLink[];
 }
@@ -100,6 +100,19 @@ export interface LegalPage { id: string; title: string; content: string; updated
 
 export type NotificationType = "review" | "message" | "listing" | "verification" | "account";
 export interface AppNotification { id: string; type: NotificationType; title: string; body: string; link: string; actorId: string; read: boolean; createdAt?: unknown; }
+
+/** assistantLogs/{id} — every question asked to the on-site assistant. Admin-only read. */
+export interface AssistantLog {
+  id: string;
+  question: string;
+  answer: string;
+  intent: string;
+  links: Array<{ label: string; href: string }>;
+  pagePath: string;
+  uid: string | null;
+  reviewed: boolean;
+  createdAt?: unknown;
+}
 export interface SavedBusiness { id: string; businessId: string; savedAt?: unknown; }
 export interface Conversation {
   id: string;

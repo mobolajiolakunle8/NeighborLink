@@ -43,15 +43,31 @@ firebase deploy --only firestore:rules,firestore:indexes,storage
 
 Add the production domain to Firebase Authentication authorized domains.
 
-## Administrator setup (one time)
+## Administrator setup and MFA (one time)
 
-The first administrator is created with a **one-time Admin Setup Key**. The key is stored only in your git-ignored `.env.local` (`ADMIN_SETUP_KEY`). `firestore.rules` contains just its SHA-256 hash, and no key is shipped in the website code.
+Next.js and eslint-config-next are pinned to the patched 16.4.5 release, which clears the critical Next.js advisory. The current production audit still reports high-severity advisories inherited through the pinned Firebase 12 client and its gRPC dependency; npm's suggested "fix" is a breaking Firebase 9 downgrade and must not be applied automatically. Reassess with a tested Firebase upgrade during dependency maintenance.
 
-1. Publish the latest `firestore.rules` (Firebase Console → Firestore → Rules → Publish, or `firebase deploy --only firestore:rules`).
-2. Sign in on the site, open `/dashboard`, enter the key and click **Activate Admin Privileges**. Or run `node scripts/setup-admin.mjs <email> <password>`, which reads the key from `.env.local`.
-3. The key works **once**: a `config/bootstrap` record is created and further claims are blocked. Add more admins from **Dashboard → Users**.
+**The public one-time setup key has been retired.** No client page, registration form or setup script can grant administrator access. Existing setup keys should be treated as exposed and ignored.
 
-To rotate the key before it is used, generate a new key, put its lowercase SHA-256 hex in `firestore.rules`, and republish. If the only admin account is lost, set `users/{uid}.role` to `admin` in the Firebase Console.
+1. Create the **first** administrator directly in the Firebase Console: create the Authentication user, then set `users/{uid}.role = "admin"` in Firestore.
+2. Verify that administrator's email. Admin writes require `email_verified = true`.
+3. Sign in. Open **Profile -> Administrator security** and enrol an authenticator app (TOTP MFA).
+4. Sign out and sign back in. The login page will ask for a 6-digit authenticator code, proving the second factor in the ID token.
+5. From **Profile -> Administrator security**, choose **Require MFA for all admins**. Firestore then rejects privileged admin writes from sessions without a second factor.
+6. Grant further admins from **Dashboard -> Users**. Requiring MFA cannot be disabled from the client.
+
+Firebase Console setup required once: enable **TOTP MFA** under Authentication -> Sign-in method / Identity Platform. TOTP MFA requires Identity Platform; check its pricing and availability before enabling. Until it is enabled, `config/security.requireAdminMfa` should stay unset, and admins still need verified email plus password.
+
+Administrators must be restored from the Firebase Console if the only admin loses MFA access; no public recovery key exists.
+
+## Additional Firestore protections
+
+- **No fabricated alerts:** every in-app notification must carry `sourceType` and `sourceId`. Rules verify the source document exists and that the actor is allowed to trigger that notice (review author, MFA-verified admin, or conversation participant).
+- **Suspensions are durable:** suspending or removing an account writes a private `accountBans/{sha256(email)}` document. A new profile with that email is refused, so deleting and recreating a profile cannot bypass a suspension.
+- **Admin writes require MFA** once `config/security.requireAdminMfa` is enabled. The flag can only be switched on by an MFA-verified admin and cannot be switched off from the client.
+- **No public bootstrap:** `config/bootstrap` is denied for all client reads and writes; admin roles are granted only by an existing verified admin or directly in the Firebase Console.
+
+Publish `firestore.rules` and `storage.rules` after every deployment. A successful website build does not publish rules.
 
 ## Automatic rules deployment
 
@@ -59,12 +75,12 @@ Add `FIREBASE_TOKEN` (from `firebase login:ci`) or `FIREBASE_SERVICE_ACCOUNT_JSO
 
 ## New Firestore data
 
-`users/{uid}/saved`, `users/{uid}/notifications`, `conversations/{id}/messages`, `config/bootstrap`, plus business fields `whatsappEnabled`, `verificationStatus`, `cacNumber` and user field `suspendedReason`. Publish `firestore.indexes.json` for the inbox index.
+`users/{uid}/saved`, `users/{uid}/notifications`, `conversations/{id}/messages`, `config/security`, `accountBans/{sha256(email)}`, plus business fields `whatsappEnabled`, `verificationStatus`, `cacNumber`, and user fields `emailHash` and `suspendedReason`. Publish `firestore.indexes.json` for the inbox index.
 
 ## Maps and admin messaging
 
-- Interactive maps use Google Maps JavaScript API with accessible draggable pins. A Google Maps API key is required for interactive tiles. In Google Cloud enable **Maps JavaScript API** and billing, restrict the key to website HTTP referrers and that API, then set `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in Vercel Production and Preview and redeploy. No Google Maps key is present in this repo/sandbox. Until set, Google Maps URLs and manual coordinates/geolocation still work. `DEMO_MAP_ID` is used for evaluation markers; create a production Map ID and set `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` when styling the production map.
-- Business owners set latitude/longitude in the listing form (click or drag the Google map when enabled, enter coordinates, or explicitly use current location while at the business). Admins can correct pins from Dashboard → Businesses → Location. Only approved listings with valid saved coordinates appear publicly. Coordinates sync live; this is the saved business location, not continuous GPS tracking.
+- Interactive maps use Google Maps JavaScript API with accessible draggable pins. A Google Maps API key is required for interactive tiles. In Google Cloud enable **Maps JavaScript API** and billing, restrict the key to website HTTP referrers and that API, then set `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in Vercel Production and Preview and redeploy. No Google Maps key is present in this repo/sandbox. Until set, the site automatically uses an interactive OpenStreetMap fallback with the same exact pins, while Google Maps links and manual coordinates/geolocation still work. `DEMO_MAP_ID` is used for evaluation markers; create a production Map ID and set `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` when styling the production map.
+- Business owners must set an exact latitude/longitude in the listing form (click or drag the map when enabled, enter coordinates, or explicitly use current location while at the business). Owners can update only the pin without sending an approved listing back to review. Admins can correct pins and filter “Missing pin” from Dashboard → Businesses → Location. Only approved listings with valid saved coordinates appear publicly. Coordinates sync live; this is the saved business location, not continuous GPS tracking.
 - Business cover photo recommendation: **1600 × 900 px (16:9)**. Uploaded images are auto-oriented, centre-cropped when needed, EXIF-stripped, resized and compressed to WebP (JPEG fallback) ≤1.5 MB before Storage. Source files up to 25 MB are accepted. Logos/profile images use a square crop up to 1024×1024; other images preserve aspect ratio with a 1600 px longest edge. GIFs become still images. External image URLs are used as-is and are not compressed.
 - The homepage no longer renders the full category grid or neighbourhood chip list; it shows a business map with compact category/area selectors. The directory also has a map view.
 - All new direct messages are admin support threads (`conversations` with `kind: "admin"`). Members see their own threads in `/profile#messages` and `/inbox`; active admins see all support threads in Dashboard → Member messages. Admin replies create an in-app notification for the member. Older peer-to-peer threads are read-only.

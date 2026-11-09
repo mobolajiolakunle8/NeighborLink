@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, Mail, MapPin, Phone, Send, ShieldAlert } from "lucide-react";
+import { AlertCircle, CheckCircle2, Mail, MapPin, Phone, Send } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useSite } from "@/context/SiteContext";
 import { startSupportMessage, submitContact } from "@/lib/api";
@@ -74,10 +74,6 @@ export default function ContactPage() {
           <div className="card flex items-center gap-4 p-6">
             <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-sage"><MapPin size={22} aria-hidden /></span>
             <span><span className="block text-xs font-bold uppercase tracking-wide text-muted">Location</span><span className="font-extrabold">{settings.address}</span></span>
-          </div>
-          <div className="flex gap-2 rounded-2xl border border-[#EAD9AE] bg-gold-soft p-5 text-sm font-semibold text-[#7A5A1E]">
-            <ShieldAlert size={18} className="mt-0.5 shrink-0" aria-hidden />
-            {settings.emergencyDisclaimer}
           </div>
           </div>
         </Reveal>

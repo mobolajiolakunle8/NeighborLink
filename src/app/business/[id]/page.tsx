@@ -15,7 +15,7 @@ import { getDb } from "@/lib/firebase";
 import { useLiveDoc, useLiveList, useNotice } from "@/lib/hooks";
 import { addReview, createReport, recordBusinessView } from "@/lib/api";
 import type { Business, Review } from "@/lib/types";
-import { coordinatesDirectionsUrl, directionsUrl, formatDate, friendlyError, hasBusinessLocation, sortByTimestampDesc, whatsappNumber } from "@/lib/utils";
+import { coordinatesDirectionsUrl, directionsUrl, formatDate, friendlyError, businessCoordinates, hasBusinessLocation, sortByTimestampDesc, whatsappNumber } from "@/lib/utils";
 import { Alert, EmptyState, Field, Spinner, StatusBadge } from "@/components/ui";
 
 const REPORT_REASONS = ["Spam or scam", "Wrong or misleading information", "Inappropriate content", "Business is closed", "Other"];
@@ -73,8 +73,8 @@ export default function BusinessPage() {
   const phoneHref = b.phone ? `tel:${b.phone.replace(/[\s-]/g, "")}` : null;
   const wa = b.whatsappEnabled ? whatsappNumber(b.phone) : null;
   const area = neighbourhoodName(b.neighbourhoodId) || "Ibadan";
-  const located = hasBusinessLocation(b);
-  const directions = located ? coordinatesDirectionsUrl(b.latitude!, b.longitude!) : directionsUrl(b.name, b.address, area);
+  const coords = businessCoordinates(b); const located = coords !== null;
+  const directions = located ? coordinatesDirectionsUrl(coords!.lat, coords!.lng) : directionsUrl(b.name, b.address, area);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
@@ -111,7 +111,7 @@ export default function BusinessPage() {
       </article>
       <Reveal variant="up"><section className="card mt-6 p-6 sm:p-8" aria-labelledby="location-title">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Find this business</p><h2 id="location-title" className="mt-1 text-xl font-extrabold">Business location</h2></div>{located && <a href={directions} target="_blank" rel="noopener noreferrer" className="btn-outline !py-2 !text-sm"><Navigation size={15} />Get directions</a>}</div>
-        {located ? <><div className="mt-4"><MapPanel points={[{ id: b.id, lat: b.latitude!, lng: b.longitude!, title: b.name, subtitle: b.address || area, href: `/business/${b.id}` }]} height={320} label={`Location of ${b.name}`} /></div><p className="mt-3 text-xs text-muted">{b.address ? `${b.address} · ` : ""}The map reflects the saved coordinates. Owner edits appear publicly after review. Confirm the address before travelling.</p></> : <div className="mt-4 rounded-xl bg-sage/60 p-5 text-sm text-muted"><MapPin size={22} className="mb-2" /><p className="font-bold text-forest">Map location not added yet</p><p className="mt-1">{isOwner || isAdmin ? "Add a pin in the listing form to show this business on the map." : "Contact the admin team for help finding this business."}</p>{isOwner && <Link href="/profile#my-listings" className="btn-primary mt-3 !py-2 !text-sm">Add location</Link>}</div>}
+        {located ? <><div className="mt-4"><MapPanel points={coords ? [{ id: b.id, lat: coords.lat, lng: coords.lng, title: b.name, subtitle: b.address || area, href: `/business/${b.id}` }] : []} height={320} label={`Location of ${b.name}`} /></div><p className="mt-3 text-xs text-muted">{b.address ? `${b.address} · ` : ""}The map reflects the saved coordinates. Owner edits appear publicly after review. Confirm the address before travelling.</p></> : <div className="mt-4 rounded-xl bg-sage/60 p-5 text-sm text-muted"><MapPin size={22} className="mb-2" /><p className="font-bold text-forest">Map location not added yet</p><p className="mt-1">{isOwner || isAdmin ? "Add a pin in the listing form to show this business on the map." : "Contact the admin team for help finding this business."}</p>{isOwner && <Link href="/profile#my-listings" className="btn-primary mt-3 !py-2 !text-sm">Add location</Link>}</div>}
       </section></Reveal>
       <Reveal variant="up" delay={100}>
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">

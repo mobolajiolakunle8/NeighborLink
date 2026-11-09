@@ -141,8 +141,15 @@ export function spamSignals(text: string): string[] {
   return SPAM_PHRASES.filter((p) => new RegExp(`\\b${p.replace(/\s+/g, "\\s+")}\\b`).test(t));
 }
 
-export function hasBusinessLocation(b: { latitude?: number | null; longitude?: number | null }): boolean {
-  return typeof b.latitude === "number" && typeof b.longitude === "number" && Number.isFinite(b.latitude) && Number.isFinite(b.longitude) && Math.abs(b.latitude) <= 90 && Math.abs(b.longitude) <= 180;
+export function businessCoordinates(b: { latitude?: number | string | null; longitude?: number | string | null }): { lat: number; lng: number } | null {
+  const lat = typeof b.latitude === "string" ? Number(b.latitude) : b.latitude;
+  const lng = typeof b.longitude === "string" ? Number(b.longitude) : b.longitude;
+  if (typeof lat !== "number" || typeof lng !== "number" || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+export function hasBusinessLocation(b: { latitude?: number | string | null; longitude?: number | string | null }): boolean {
+  return businessCoordinates(b) !== null;
 }
 export function coordinatesDirectionsUrl(lat: number, lng: number): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${lat},${lng}`)}`;

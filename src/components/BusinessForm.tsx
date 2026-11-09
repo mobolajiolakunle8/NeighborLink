@@ -22,7 +22,8 @@ function toForm(b?: Business): FormState {
   };
 }
 function validate(f: FormState): string | null {
-  if (!validCoordinatePair(f.latitude, f.longitude)) return "Please set both map coordinates correctly, or leave both empty.";
+  if (!f.latitude.trim() || !f.longitude.trim()) return "Please add the exact business location: set the map pin, enter both coordinates, or use your current location.";
+  if (!validCoordinatePair(f.latitude, f.longitude)) return "Those coordinates are not valid. Latitude must be -90 to 90 and longitude -180 to 180.";
   if (f.name.trim().length < 3) return "Business name must be at least 3 characters.";
   if (f.description.trim().length < 20) return "Please describe your business in at least 20 characters.";
   if (f.description.trim().length > 4000) return "Description is too long (4000 characters maximum).";
@@ -71,7 +72,7 @@ export default function BusinessForm({ mode, initial, onDone, onCancel }: { mode
         <Field label="Address / landmark"><input className="input" value={form.address} onChange={e => set("address")(e.target.value)} placeholder="e.g. Beside Iwo Road Mosque" /></Field>
         <Field label="Opening hours"><input className="input" value={form.openingHours} onChange={e => set("openingHours")(e.target.value)} placeholder="Mon–Sat 8am–6pm" /></Field>
         <Field label="Website (https://)" className="sm:col-span-2"><input className="input" value={form.website} onChange={e => set("website")(e.target.value)} placeholder="optional" /></Field>
-        <BusinessLocationFields latitude={form.latitude} longitude={form.longitude} onChange={(latitude, longitude) => setForm(f => ({ ...f, latitude, longitude }))} />
+        <BusinessLocationFields latitude={form.latitude} longitude={form.longitude} onChange={(latitude, longitude) => setForm(f => ({ ...f, latitude, longitude }))} searchQuery={[form.name, form.address, activeNeighbourhoods.find(h => h.id === form.neighbourhoodId)?.name].filter(Boolean).join(" ")} />
         <div className="sm:col-span-2"><ImageUploadField label="Business cover photo" value={form.imageUrl} onChange={set("imageUrl")} folder={`businesses/${firebaseUser?.uid ?? "unknown"}`} variant="cover" /></div>
       </div>
       {error && <Alert kind="error">{error}</Alert>}

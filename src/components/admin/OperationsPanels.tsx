@@ -67,7 +67,7 @@ function AdminLocationEditor({ business, onClose }: { business: Business; onClos
   const { notice, show } = useNotice();
   return <div className="mb-5 rounded-2xl border border-line bg-sage/30 p-5">
     <div className="mb-3 flex items-center justify-between gap-3"><h3 className="font-extrabold">Map location: {business.name}</h3><button type="button" className="btn-ghost !text-xs" onClick={onClose}>Cancel</button></div>
-    <BusinessLocationFields latitude={latitude} longitude={longitude} onChange={(lat, lng) => { setLatitude(lat); setLongitude(lng); }} />
+    <BusinessLocationFields latitude={latitude} longitude={longitude} onChange={(lat, lng) => { setLatitude(lat); setLongitude(lng); }} searchQuery={`${business.name} ${business.address ?? ""}`} />
     {notice && <div className="mt-3"><Alert kind={notice.kind}>{notice.text}</Alert></div>}
     <button type="button" disabled={busy || !validCoordinatePair(latitude, longitude)} className="btn-primary mt-4 !py-2 !text-sm" onClick={async () => {
       setBusy(true);
@@ -84,13 +84,14 @@ export function BusinessesPanel() {
   const items = useLiveList<Business>("admin-businesses", () =>
     query(collection(getDb(), "businesses"), orderBy("createdAt", "desc"), limit(500)),
   );
-  const [filter, setFilter] = useState<"pending" | "verification" | "approved" | "rejected" | "all">("pending");
+  const [filter, setFilter] = useState<"pending" | "verification" | "approved" | "rejected" | "all" | "unmapped">("pending");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [locationEdit, setLocationEdit] = useState<Business | null>(null);
   const rows = useMemo(() => {
     if (filter === "all") return items.data;
     if (filter === "verification") return items.data.filter((b) => b.verificationStatus === "requested");
+    if (filter === "unmapped") return items.data.filter((b) => !(typeof b.latitude === "number" && typeof b.longitude === "number"));
     return items.data.filter((b) => b.status === filter);
   }, [items.data, filter]);
   const pager = usePagination(rows, PAGE);
@@ -116,15 +117,15 @@ export function BusinessesPanel() {
       loading={items.loading}
       error={items.error}
       items={rows}
-      emptyTitle={filter === "pending" ? "Nothing waiting for approval" : filter === "verification" ? "No verification requests" : "No listings in this view"}
+      emptyTitle={filter === "pending" ? "Nothing waiting for approval" : filter === "verification" ? "No verification requests" : filter === "unmapped" ? "Every listing has a map pin" : "No listings in this view"}
       emptyText="New submissions appear here in real time."
       notice={notice && <Alert kind={notice.kind}>{notice.text}</Alert>}
       pager={pager}
       filters={
         <div className="flex flex-wrap gap-2" role="group" aria-label="Filter">
-          {(["pending", "verification", "approved", "rejected", "all"] as const).map((f) => (
+          {(["pending", "verification", "unmapped", "approved", "rejected", "all"] as const).map((f) => (
             <button key={f} type="button" aria-pressed={filter === f} className={`tab-btn ${filter === f ? "active" : ""}`} onClick={() => { setFilter(f); setSelected(new Set()); }}>
-              {f === "verification" ? `Verification (${items.data.filter((b) => b.verificationStatus === "requested").length})` : f[0].toUpperCase() + f.slice(1)}
+              {f === "verification" ? `Verification (${items.data.filter((b) => b.verificationStatus === "requested").length})` : f === "unmapped" ? `Missing pin (${items.data.filter((b) => !(typeof b.latitude === "number" && typeof b.longitude === "number")).length})` : f[0].toUpperCase() + f.slice(1)}
             </button>
           ))}
         </div>

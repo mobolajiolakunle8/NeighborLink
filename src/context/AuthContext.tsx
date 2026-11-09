@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { getIdTokenResult, onIdTokenChanged, signOut, type User } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { getAuthClient, getDb, isFirebaseConfigured } from "@/lib/firebase";
 import type { UserProfile } from "@/lib/types";
@@ -12,22 +12,46 @@ type AuthValue = {
   loading: boolean;
   isSignedIn: boolean;
   isAdmin: boolean;
+  /** True only when the current ID token proves a second factor was used. */
+  mfaVerified: boolean;
+  /** Site-wide flag set by an MFA-verified administrator. */
+  adminMfaRequired: boolean;
+  emailVerified: boolean;
   logout: () => Promise<void>;
 };
+
 const AuthContext = createContext<AuthValue | null>(null);
 
-/** Tracks the Firebase Auth session and subscribes to the signed-in user's profile. */
+async function hasSecondFactor(user: User): Promise<boolean> {
+  const result = await getIdTokenResult(user);
+  const firebase = result.claims.firebase as Record<string, unknown> | undefined;
+  const second = (result as { signInSecondFactor?: string | null }).signInSecondFactor
+    ?? firebase?.sign_in_second_factor;
+  return Boolean(second && firebase?.second_factor_identifier);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
+  const [mfaVerified, setMfaVerified] = useState(false);
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [adminMfaRequired, setAdminMfaRequired] = useState(false);
 
+  // ID-token listener refreshes MFA status after enrolment or challenge completion.
   useEffect(() => {
     if (!isFirebaseConfigured) { setAuthReady(true); return undefined; }
-    return onAuthStateChanged(getAuthClient(), user => {
-      setFirebaseUser(user); setAuthReady(true);
-      if (!user) { setProfile(null); setProfileReady(true); } else { setProfileReady(false); }
+    return onIdTokenChanged(getAuthClient(), user => {
+      setFirebaseUser(user);
+      setAuthReady(true);
+      setEmailVerified(Boolean(user?.emailVerified));
+      if (!user) {
+        setProfile(null); setProfileReady(true); setMfaVerified(false);
+      } else {
+        setProfileReady(false);
+        hasSecondFactor(user).then(setMfaVerified).catch(() => setMfaVerified(false));
+      }
     });
   }, []);
 
@@ -39,19 +63,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, () => setProfileReady(true));
   }, [firebaseUser]);
 
-  // A suspended account is signed out immediately, wherever it is open.
+  // Public, non-sensitive security flag. Rules enforce it server-side too.
+  useEffect(() => {
+    if (!isFirebaseConfigured) return undefined;
+    return onSnapshot(doc(getDb(), "config", "security"), snap => {
+      setAdminMfaRequired(snap.data()?.requireAdminMfa === true);
+    }, () => setAdminMfaRequired(false));
+  }, []);
+
+  // A suspended account is signed out immediately in every open tab.
   useEffect(() => { if (profile?.isSuspended) signOut(getAuthClient()).catch(() => undefined); }, [profile]);
 
   const value = useMemo<AuthValue>(() => ({
     firebaseUser, profile,
     loading: !authReady || (!!firebaseUser && !profileReady),
     isSignedIn: !!firebaseUser,
-    isAdmin: profile?.role === "admin" && !profile.isSuspended,
+    isAdmin: profile?.role === "admin" && !profile.isSuspended && emailVerified && (!adminMfaRequired || mfaVerified),
+    mfaVerified, adminMfaRequired, emailVerified,
     logout: async () => { await signOut(getAuthClient()); },
-  }), [firebaseUser, profile, authReady, profileReady]);
+  }), [firebaseUser, profile, authReady, profileReady, mfaVerified, adminMfaRequired, emailVerified]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
+
 export function useAuth(): AuthValue {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
